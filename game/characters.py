@@ -144,10 +144,84 @@ class Character:
 class DonaldDuck(Character):
     """唐老鸭类"""
     
+    # 可选的身体颜色
+    BODY_COLORS = [
+        (255, 255, 0),    # 黄色（经典）
+        (255, 220, 100),  # 浅黄色
+        (255, 240, 150),  # 淡黄色
+        (255, 200, 0),    # 金黄色
+    ]
+    
+    # 可选的帽子颜色
+    HAT_COLORS = [
+        (0, 0, 0),        # 黑色（经典）
+        (139, 69, 19),    # 棕色
+        (50, 50, 50),     # 深灰色
+        (25, 25, 112),    # 深蓝色
+        (139, 0, 0),      # 深红色
+    ]
+    
+    # 可选的嘴巴颜色
+    BEAK_COLORS = [
+        (255, 165, 0),    # 橙色（经典）
+        (255, 140, 0),    # 深橙色
+        (255, 200, 0),    # 金色
+        (255, 215, 0),    # 金黄色
+    ]
+    
     def __init__(self, x, y, width, height):
-        super().__init__(x, y, width, height, (255, 255, 0), "唐老鸭")
-        self.hat_color = (0, 0, 0)  # 黑色帽子
+        # 随机选择外观
+        self.body_color = random.choice(self.BODY_COLORS)
+        self.hat_color = random.choice(self.HAT_COLORS)
+        self.beak_color = random.choice(self.BEAK_COLORS)
+        self.has_scarf = random.choice([True, False])  # 随机是否有围巾
+        self.scarf_color = random.choice([
+            (255, 0, 0),      # 红色
+            (0, 0, 255),      # 蓝色
+            (0, 255, 0),      # 绿色
+            (255, 192, 203),  # 粉色
+            (255, 255, 0),    # 黄色
+        ]) if self.has_scarf else None
+        
+        # 保存初始外观（用于恢复）
+        self.original_body_color = self.body_color
+        self.original_hat_color = self.hat_color
+        self.original_beak_color = self.beak_color
+        self.original_has_scarf = self.has_scarf
+        self.original_scarf_color = self.scarf_color
+        self.has_glasses = False  # 眼镜装饰（用于工作主题）
+        
+        super().__init__(x, y, width, height, self.body_color, "唐老鸭")
+    
+    def switch_to_red_packet_theme(self):
+        """切换到红包主题外观"""
+        self.body_color = (255, 200, 0)  # 金黄色身体
+        self.color = self.body_color  # 更新基类颜色
+        self.hat_color = (255, 215, 0)  # 金色帽子
+        self.beak_color = (255, 140, 0)  # 深橙色嘴巴
+        self.has_scarf = True
+        self.scarf_color = (255, 0, 0)  # 红色围巾
+        self.has_glasses = False
+    
+    def switch_to_work_theme(self):
+        """切换到工作主题外观"""
+        self.body_color = (255, 255, 0)  # 黄色身体
+        self.color = self.body_color  # 更新基类颜色
+        self.hat_color = (25, 25, 112)  # 深蓝色帽子
         self.beak_color = (255, 165, 0)  # 橙色嘴巴
+        self.has_scarf = False
+        self.scarf_color = None
+        self.has_glasses = True  # 添加眼镜装饰
+    
+    def restore_original_appearance(self):
+        """恢复初始随机外观"""
+        self.body_color = self.original_body_color
+        self.color = self.body_color  # 更新基类颜色
+        self.hat_color = self.original_hat_color
+        self.beak_color = self.original_beak_color
+        self.has_scarf = self.original_has_scarf
+        self.scarf_color = self.original_scarf_color
+        self.has_glasses = False
     
     def render(self, screen):
         """渲染唐老鸭"""
@@ -158,10 +232,18 @@ class DonaldDuck(Character):
         render_y = self.y - self.original_bounce
         
         # 绘制身体
-        pygame.draw.ellipse(screen, self.color, 
+        pygame.draw.ellipse(screen, self.body_color, 
                           (self.x, render_y, self.width, self.height))
         pygame.draw.ellipse(screen, (0, 0, 0), 
                           (self.x, render_y, self.width, self.height), 2)
+        
+        # 绘制围巾（在身体下方）
+        if self.has_scarf:
+            scarf_y = render_y + self.height - 10
+            pygame.draw.rect(screen, self.scarf_color,
+                           (self.x - 5, scarf_y, self.width + 10, 12))
+            pygame.draw.rect(screen, (0, 0, 0),
+                           (self.x - 5, scarf_y, self.width + 10, 12), 2)
         
         # 绘制帽子
         hat_rect = (self.x - 5, render_y - 15, self.width + 10, 20)
@@ -191,6 +273,19 @@ class DonaldDuck(Character):
                           (self.x + self.width // 4, mouth_y - 8, 
                            self.width // 2, 16), 2)
         
+        # 绘制眼镜（工作主题）
+        if self.has_glasses:
+            glasses_y = render_y + self.height // 3 - 5
+            # 绘制眼镜框
+            pygame.draw.ellipse(screen, (100, 100, 100),
+                              (self.x + self.width // 3 - 8, glasses_y - 3, 16, 12), 2)
+            pygame.draw.ellipse(screen, (100, 100, 100),
+                              (self.x + 2 * self.width // 3 - 8, glasses_y - 3, 16, 12), 2)
+            # 绘制眼镜桥
+            pygame.draw.line(screen, (100, 100, 100),
+                           (self.x + self.width // 3 + 8, glasses_y + 1),
+                           (self.x + 2 * self.width // 3 - 8, glasses_y + 1), 2)
+        
         # 绘制名字
         font = pygame.font.Font(None, 24)
         text = font.render(self.name, True, (0, 0, 0))
@@ -200,9 +295,72 @@ class DonaldDuck(Character):
 class Duckling(Character):
     """汤小鸭类"""
     
+    # 可选的身体颜色
+    BODY_COLORS = [
+        (255, 165, 0),    # 橙色（经典）
+        (255, 200, 0),    # 金黄色
+        (255, 140, 0),    # 深橙色
+        (255, 220, 100), # 浅橙色
+        (255, 192, 128), # 淡橙色
+        (255, 255, 0),   # 黄色
+        (255, 215, 0),   # 金黄色
+    ]
+    
+    # 可选的帽子颜色（小鸭也可以戴小帽子）
+    HAT_COLORS = [
+        (139, 69, 19),   # 棕色
+        (50, 50, 50),    # 深灰色
+        (25, 25, 112),   # 深蓝色
+        (139, 0, 0),     # 深红色
+        (0, 100, 0),     # 深绿色
+    ]
+    
     def __init__(self, x, y, width, height, name):
-        super().__init__(x, y, width, height, (255, 165, 0), name)
+        # 随机选择外观
+        self.body_color = random.choice(self.BODY_COLORS)
+        self.has_hat = random.choice([True, False])  # 随机是否有帽子
+        self.hat_color = random.choice(self.HAT_COLORS) if self.has_hat else None
+        self.has_bow = random.choice([True, False])  # 随机是否有蝴蝶结
+        self.bow_color = random.choice([
+            (255, 0, 0),      # 红色
+            (0, 0, 255),      # 蓝色
+            (255, 192, 203),  # 粉色
+            (255, 255, 0),    # 黄色
+            (0, 255, 0),      # 绿色
+        ]) if self.has_bow else None
+        
+        # 保存初始外观（用于恢复）
+        self.original_body_color = self.body_color
+        self.original_has_hat = self.has_hat
+        self.original_hat_color = self.hat_color
+        self.original_has_bow = self.has_bow
+        self.original_bow_color = self.bow_color
+        
+        super().__init__(x, y, width, height, self.body_color, name)
         self.size = width  # 记录原始大小
+    
+    def switch_to_excited_theme(self):
+        """切换到兴奋外观（红包主题）"""
+        self.has_hat = False
+        self.hat_color = None
+        self.has_bow = True
+        self.bow_color = (255, 0, 0)  # 统一红色蝴蝶结
+    
+    def switch_to_focused_theme(self):
+        """切换到专注外观（工作主题）"""
+        self.has_hat = True
+        self.hat_color = (25, 25, 112)  # 统一深蓝色帽子
+        self.has_bow = False
+        self.bow_color = None
+    
+    def restore_original_appearance(self):
+        """恢复初始随机外观"""
+        self.body_color = self.original_body_color
+        self.color = self.body_color  # 更新基类颜色
+        self.has_hat = self.original_has_hat
+        self.hat_color = self.original_hat_color
+        self.has_bow = self.original_has_bow
+        self.bow_color = self.original_bow_color
     
     def render(self, screen):
         """渲染汤小鸭"""
@@ -213,10 +371,28 @@ class Duckling(Character):
         render_y = self.y - self.original_bounce
         
         # 绘制身体
-        pygame.draw.ellipse(screen, self.color, 
+        pygame.draw.ellipse(screen, self.body_color, 
                           (self.x, render_y, self.width, self.height))
         pygame.draw.ellipse(screen, (0, 0, 0), 
                           (self.x, render_y, self.width, self.height), 2)
+        
+        # 绘制蝴蝶结（在身体下方）
+        if self.has_bow:
+            bow_y = render_y + self.height - 8
+            # 绘制蝴蝶结主体
+            pygame.draw.ellipse(screen, self.bow_color,
+                              (self.x + self.width // 2 - 8, bow_y, 16, 10))
+            pygame.draw.ellipse(screen, (0, 0, 0),
+                              (self.x + self.width // 2 - 8, bow_y, 16, 10), 1)
+            # 绘制蝴蝶结中心
+            pygame.draw.circle(screen, (0, 0, 0),
+                             (self.x + self.width // 2, bow_y + 5), 3)
+        
+        # 绘制小帽子（如果有）
+        if self.hat_color:
+            hat_rect = (self.x - 3, render_y - 10, self.width + 6, 12)
+            pygame.draw.ellipse(screen, self.hat_color, hat_rect)
+            pygame.draw.ellipse(screen, (0, 0, 0), hat_rect, 1)
         
         # 绘制眼睛
         eye_size = 6
@@ -235,7 +411,8 @@ class Duckling(Character):
         # 绘制名字
         font = pygame.font.Font(None, 20)
         text = font.render(self.name, True, (0, 0, 0))
-        text_rect = text.get_rect(center=(self.x + self.width // 2, render_y - 15))
+        name_y_offset = -15 if not self.hat_color else -22
+        text_rect = text.get_rect(center=(self.x + self.width // 2, render_y + name_y_offset))
         screen.blit(text, text_rect)
     
     def start_random_movement(self):

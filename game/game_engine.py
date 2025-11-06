@@ -161,14 +161,44 @@ class GameEngine:
         # 停止唐老鸭弹跳
         self.donald.stop_bounce()
     
+    def switch_to_red_packet_theme(self):
+        """切换到红包主题外观"""
+        self.donald.switch_to_red_packet_theme()
+        for duckling in self.ducklings:
+            duckling.switch_to_excited_theme()
+    
+    def switch_to_work_theme(self):
+        """切换到工作主题外观"""
+        self.donald.switch_to_work_theme()
+        for duckling in self.ducklings:
+            duckling.switch_to_focused_theme()
+    
+    def restore_original_appearance(self):
+        """恢复初始随机外观"""
+        self.donald.restore_original_appearance()
+        for duckling in self.ducklings:
+            duckling.restore_original_appearance()
+    
     def start_red_packet_game(self):
         """开始红包游戏"""
         self.red_packet_manager.start_game()
+        self.switch_to_red_packet_theme()  # 切换到红包主题外观
         self.start_character_animation()
     
     def stop_red_packet_game(self):
         """停止红包游戏"""
         self.red_packet_manager.stop_game()
+        self.restore_original_appearance()  # 恢复初始外观
+        self.stop_character_animation()
+    
+    def start_code_counting_theme(self):
+        """开始代码统计主题外观"""
+        self.switch_to_work_theme()  # 切换到工作主题外观
+        self.start_character_animation()
+    
+    def stop_code_counting_theme(self):
+        """停止代码统计主题外观"""
+        self.restore_original_appearance()  # 恢复初始外观
         self.stop_character_animation()
     
     def get_red_packet_statistics(self):
