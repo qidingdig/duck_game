@@ -10,7 +10,7 @@ import sys
 import os
 import pygame
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import threading
 import time
 import requests
@@ -210,7 +210,8 @@ class DuckGame:
         
         # 初始化pygame
         pygame.init()
-        self.screen = pygame.display.set_mode((self.config.SCREEN_WIDTH, self.config.SCREEN_HEIGHT))
+        # 启用窗口调整大小功能，允许最大最小化
+        self.screen = pygame.display.set_mode((self.config.SCREEN_WIDTH, self.config.SCREEN_HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption("Duck Game - 唐老鸭小游戏")
         
         # 游戏状态
@@ -252,14 +253,21 @@ class DuckGame:
         self._chart_window_created_time = None  # 图表窗口创建时间，用于临时保护
         self._tk_update_counter = 0  # 用于控制Tkinter更新频率
         self._need_set_focus = False  # 标记是否需要设置输入框焦点
+        self._need_config_dialog = False  # 标记是否需要创建配置对话框
+        self._last_window_pos = {}  # 记录窗口位置，用于检测拖动
+        self._is_dragging = False  # 标记是否正在拖动窗口
+        self._update_call_count = 0  # 计数器，限制update()调用频率
+        self._drag_start_time = 0  # 拖动开始时间
+        self._last_drag_check_time = 0  # 上次拖动检查时间
         
         # 在主线程中初始化Tkinter root窗口（必须在主线程中创建）
         try:
             self._root = tk.Tk()
             self._root.withdraw()  # 隐藏根窗口
             self._root.protocol("WM_DELETE_WINDOW", lambda: None)  # 防止关闭根窗口
-            # 不启动主动的事件循环，避免与pygame冲突
-            # 只在需要时调用update_idletasks()
+            # 启动after()事件处理循环，让Tkinter自己处理事件，避免在主循环中调用update()
+            self._tk_event_loop_running = False
+            self._start_tk_event_loop()
         except Exception as e:
             print(f"初始化Tkinter root时出错: {e}")
             self._root = None
@@ -280,6 +288,15 @@ class DuckGame:
         print("- 我要ai问答")
         print("- 我要统计代码量")
         print("========================")
+    
+    def _start_tk_event_loop(self):
+        """启动Tkinter的after()事件循环（现在事件处理在主循环中完成，这里只标记）"""
+        if not hasattr(self, '_root') or self._root is None:
+            return
+        
+        # 标记事件循环已启动（虽然实际处理在主循环中）
+        self._tk_event_loop_running = True
+    
     
     def handle_click(self, pos):
         """处理鼠标点击事件"""
@@ -305,6 +322,258 @@ class DuckGame:
         self._need_dialog = True
         print("已标记需要创建对话框")  # 调试信息
     
+    def _show_code_counting_dialog(self):
+        """显示代码统计配置对话框"""
+        # 确保在主线程中创建对话框
+        if not hasattr(self, '_root') or self._root is None:
+            print("错误: Tkinter root窗口未初始化")
+            return
+        
+        try:
+            # 创建配置对话框窗口
+            config_window = tk.Toplevel(self._root)
+            config_window.title("代码统计配置")
+            config_window.geometry("700x650")
+            config_window.minsize(400, 400)  # 设置最小大小，但允许拖动和缩放
+            # 允许窗口拖动和缩放，通过智能事件处理避免GIL问题
+            config_window.focus_set()
+            
+            # 确保after()事件循环正在运行
+            if not hasattr(self, '_tk_event_loop_running') or not self._tk_event_loop_running:
+                self._start_tk_event_loop()
+            
+            # 保存配置窗口引用，以便清理
+            self._config_window = config_window
+            
+            # 保存配置的变量（保存在实例变量中，避免被垃圾回收）
+            self._code_counting_config = {
+                'target_dir': os.path.dirname(os.path.abspath(__file__)),
+                'selected_languages': set(),
+                'include_blank': tk.BooleanVar(self._root, value=True),
+                'include_comment': tk.BooleanVar(self._root, value=True),
+                'include_function_stats': tk.BooleanVar(self._root, value=True),
+                'include_c_function_stats': tk.BooleanVar(self._root, value=False)
+            }
+            
+            # 创建主容器（不使用滚动框架，直接使用普通Frame）
+            main_frame = tk.Frame(config_window)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # 1. 目录选择区域
+            dir_frame = tk.LabelFrame(main_frame, text="选择统计目录", font=("Arial", 11, "bold"), padx=10, pady=10)
+            dir_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            dir_input_frame = tk.Frame(dir_frame)
+            dir_input_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            self._target_dir_var = tk.StringVar(self._root, value=self._code_counting_config['target_dir'])
+            dir_entry = tk.Entry(dir_input_frame, textvariable=self._target_dir_var, font=("Arial", 10), width=50)
+            dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+            
+            def browse_directory():
+                directory = filedialog.askdirectory(title="选择要统计的目录", initialdir=self._target_dir_var.get())
+                if directory:
+                    self._target_dir_var.set(directory)
+                    self._code_counting_config['target_dir'] = directory
+            
+            browse_btn = tk.Button(dir_input_frame, text="浏览...", command=browse_directory, font=("Arial", 10), width=10)
+            browse_btn.pack(side=tk.RIGHT)
+            
+            # 2. 语言选择区域（不使用expand=True，避免挤压按钮区域）
+            lang_frame = tk.LabelFrame(main_frame, text="选择要统计的语言（不选择则统计所有语言）", font=("Arial", 11, "bold"), padx=10, pady=10)
+            lang_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+            
+            # 语言列表（从AdvancedCodeCounter获取）
+            all_languages = sorted(set(self.code_counter.EXT_TO_LANGUAGE.values()))
+            self._language_vars = {}
+            
+            # 创建滚动框架用于语言选择（固定高度，避免占据所有空间）
+            lang_canvas = tk.Canvas(lang_frame, height=180)
+            lang_scrollbar = tk.Scrollbar(lang_frame, orient="vertical", command=lang_canvas.yview)
+            lang_scrollable_frame = tk.Frame(lang_canvas)
+            
+            # 安全地更新滚动区域（使用装饰器避免重复调用）
+            _last_update_time = [0]
+            import time as time_module
+            
+            def update_scrollregion(event=None):
+                try:
+                    # 限制更新频率，避免频繁调用导致GIL问题
+                    current_time = time_module.time()
+                    if current_time - _last_update_time[0] < 0.1:  # 最多每100ms更新一次
+                        return
+                    _last_update_time[0] = current_time
+                    
+                    lang_canvas.configure(scrollregion=lang_canvas.bbox("all"))
+                except Exception:
+                    pass  # 忽略更新时的错误
+            
+            lang_scrollable_frame.bind("<Configure>", update_scrollregion)
+            
+            # 先创建窗口，再绑定事件
+            lang_canvas_window_id = lang_canvas.create_window((0, 0), window=lang_scrollable_frame, anchor="nw")
+            lang_canvas.configure(yscrollcommand=lang_scrollbar.set)
+            
+            # Canvas窗口大小改变时也更新滚动区域（限制频率）
+            def on_canvas_configure(event):
+                try:
+                    # 更新Canvas窗口的宽度，使其与Canvas同宽
+                    canvas_width = event.width
+                    lang_canvas.itemconfig(lang_canvas_window_id, width=canvas_width)
+                    # 延迟更新滚动区域，避免频繁调用
+                    update_scrollregion()
+                except Exception:
+                    pass
+            
+            lang_canvas.bind('<Configure>', on_canvas_configure)
+            
+            # 不绑定窗口的Configure事件，避免窗口缩放时的GIL问题
+            # Canvas的滚动区域更新将通过Canvas自己的Configure事件处理
+            
+            # 创建语言复选框（3列布局）
+            cols = 3
+            for idx, lang in enumerate(all_languages):
+                var = tk.BooleanVar(self._root, value=False)
+                self._language_vars[lang] = var
+                row = idx // cols
+                col = idx % cols
+                cb = tk.Checkbutton(lang_scrollable_frame, text=lang, variable=var, font=("Arial", 9))
+                cb.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+            
+            lang_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            lang_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # 全选/全不选按钮 - 完全参考浏览按钮的布局方式
+            # 注意：lang_btn_frame不使用fill=tk.X，避免影响按钮大小
+            lang_btn_frame = tk.Frame(lang_frame)
+            lang_btn_frame.pack(padx=5, pady=5)
+            
+            def select_all_languages():
+                for var in self._language_vars.values():
+                    var.set(True)
+            
+            def deselect_all_languages():
+                for var in self._language_vars.values():
+                    var.set(False)
+            
+            # 实现切换功能：点击一次全选，再点击一次取消全选
+            def toggle_select_all(event=None):
+                # 检查是否所有语言都已选中
+                all_selected = all(var.get() for var in self._language_vars.values())
+                if all_selected:
+                    # 如果全部选中，则取消全选
+                    deselect_all_languages()
+                else:
+                    # 否则全选
+                    select_all_languages()
+            
+            # 全选按钮 - 完全参考浏览按钮的设置：font=("Arial", 10), width=10，pack时没有额外参数
+            select_all_btn = tk.Button(lang_btn_frame, text="全选", command=toggle_select_all, 
+                                      font=("Arial", 10), width=10)
+            select_all_btn.pack(side=tk.LEFT)
+            
+            # 全不选按钮 - 同样参考浏览按钮的设置
+            tk.Button(lang_btn_frame, text="全不选", command=deselect_all_languages, 
+                     font=("Arial", 10), width=10).pack(side=tk.LEFT)
+            
+            # 3. 统计选项区域
+            options_frame = tk.LabelFrame(main_frame, text="统计选项", font=("Arial", 11, "bold"), padx=10, pady=10)
+            options_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            tk.Checkbutton(options_frame, text="统计空行数", variable=self._code_counting_config['include_blank'], 
+                          font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=5)
+            tk.Checkbutton(options_frame, text="统计注释行数", variable=self._code_counting_config['include_comment'], 
+                          font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=5)
+            tk.Checkbutton(options_frame, text="统计Python函数信息（仅对Python文件）", 
+                          variable=self._code_counting_config['include_function_stats'], 
+                          font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=5)
+            tk.Checkbutton(options_frame, text="统计C/C++函数信息（仅对C/C++文件）", 
+                          variable=self._code_counting_config['include_c_function_stats'], 
+                          font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=5)
+            
+            # 4. 按钮区域（固定在底部）
+            button_frame = tk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, padx=5, pady=5, side=tk.BOTTOM)
+            
+            def start_counting():
+                # 收集配置
+                target_dir = self._target_dir_var.get().strip()
+                if not target_dir or not os.path.exists(target_dir):
+                    messagebox.showerror("错误", "请选择有效的目录路径！")
+                    return
+                
+                # 收集选中的语言
+                selected_languages = {lang for lang, var in self._language_vars.items() if var.get()}
+                
+                # 收集统计选项
+                include_blank = self._code_counting_config['include_blank'].get()
+                include_comment = self._code_counting_config['include_comment'].get()
+                include_function_stats = self._code_counting_config['include_function_stats'].get()
+                include_c_function_stats = self._code_counting_config['include_c_function_stats'].get()
+                
+                # 不关闭配置窗口，保持打开以便多次统计
+                # 显示开始统计信息
+                self._update_text_display(f"唐老鸭: 好的！开始统计代码量！\n目录: {target_dir}\n")
+                if selected_languages:
+                    lang_list = ", ".join(sorted(selected_languages))
+                    self._update_text_display(f"统计语言: {lang_list}\n\n")
+                
+                # 启动代码统计（在后台线程）
+                threading.Thread(
+                    target=self.start_code_counting,
+                    args=(target_dir, selected_languages, include_blank, include_comment, include_function_stats, include_c_function_stats),
+                    daemon=True
+                ).start()
+            
+            def cleanup_config_dialog():
+                """清理配置对话框的Tkinter变量"""
+                try:
+                    # 清理所有变量引用
+                    if hasattr(self, '_target_dir_var'):
+                        self._target_dir_var = None
+                    if hasattr(self, '_language_vars'):
+                        self._language_vars.clear()
+                    if hasattr(self, '_code_counting_config'):
+                        # 清理 BooleanVar 引用
+                        for key in list(self._code_counting_config.keys()):
+                            if isinstance(self._code_counting_config[key], (tk.BooleanVar, tk.StringVar)):
+                                self._code_counting_config[key] = None
+                            else:
+                                del self._code_counting_config[key]
+                        self._code_counting_config = None
+                    if hasattr(self, '_config_window'):
+                        self._config_window = None
+                except Exception:
+                    pass  # 忽略清理时的错误
+                config_window.destroy()
+            
+            # 按钮完全参考浏览按钮的样式，确保高度一致
+            # 浏览按钮：font=("Arial", 10), width=10，pack时没有pady
+            # 为了确保高度一致，我们也移除pack中的pady，只保留padx用于水平间距
+            start_btn = tk.Button(button_frame, text="开始统计", command=start_counting, 
+                                 font=("Arial", 10), width=10, bg="#4CAF50", fg="white")
+            start_btn.pack(side=tk.LEFT, padx=5)
+            
+            cancel_btn = tk.Button(button_frame, text="取消", command=cleanup_config_dialog, 
+                                   font=("Arial", 10), width=10)
+            cancel_btn.pack(side=tk.LEFT, padx=5)
+            
+            # 添加一个空的框架来填充剩余空间，防止按钮被压缩
+            tk.Frame(button_frame).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            # 绑定窗口关闭事件
+            config_window.protocol("WM_DELETE_WINDOW", cleanup_config_dialog)
+            
+            # 更新窗口（只使用update_idletasks，避免GIL问题）
+            config_window.update_idletasks()
+            config_window.focus_set()
+            
+        except Exception as e:
+            print(f"创建代码统计配置对话框时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("错误", f"创建配置对话框失败: {e}")
+    
     def _check_and_create_dialog(self):
         """在主循环中调用，检查并创建对话框（非阻塞）"""
         if not self._need_dialog:
@@ -326,19 +595,25 @@ class DuckGame:
         try:
             print("开始创建对话框窗口...")
             
-            # 创建对话框窗口
+            # 创建对话框窗口 - 确保可以拖动
             dialog_window = tk.Toplevel(self._root)
             dialog_window.title("与唐老鸭对话")
             dialog_window.geometry("600x500")
-            dialog_window.minsize(600, 500)
-            dialog_window.resizable(True, True)
-            # 保存初始geometry，用于后续恢复
-            self._dialog_initial_geometry = "600x500"
+            dialog_window.minsize(400, 300)  # 设置最小大小，但允许拖动和缩放
+            # 允许窗口拖动和缩放，通过智能事件处理避免GIL问题
+            # 确保窗口可以拖动（Toplevel默认就可以拖动，不需要特殊设置）
             dialog_window.deiconify()
+            # 确保窗口可以接收焦点和事件
+            dialog_window.focus_set()
+            
+            # 确保after()事件循环正在运行
+            if not hasattr(self, '_tk_event_loop_running') or not self._tk_event_loop_running:
+                self._start_tk_event_loop()
+            
             # 立即更新窗口，确保显示
             dialog_window.update_idletasks()
             
-            # 创建输入框
+            # 创建输入框 - 确保可以正常输入中文
             input_frame = tk.Frame(dialog_window)
             input_frame.pack(pady=10, padx=10, fill=tk.X)
             tk.Label(input_frame, text="输入消息:", font=("Arial", 12)).pack(anchor=tk.W)
@@ -348,7 +623,9 @@ class DuckGame:
             self.input_entry.bind('<Return>', lambda e: self.process_input(dialog_window))
             # 确保输入框默认状态是可编辑的（Entry默认就是NORMAL，但显式设置更安全）
             self.input_entry.config(state=tk.NORMAL)
-            # 注意：焦点设置会在窗口完全显示后执行
+            # 不立即设置焦点，避免影响中文输入法
+            # 延迟设置焦点，确保窗口完全显示后再设置
+            self._need_set_focus = True
             
             # 创建显示区域
             display_frame = tk.Frame(dialog_window)
@@ -375,8 +652,8 @@ class DuckGame:
             welcome_msg += "提示：\n"
             welcome_msg += "- 输入'我要抢红包'可以开始红包游戏\n"
             welcome_msg += "- 输入'我要ai问答'可以开始AI对话\n"
-            welcome_msg += "- 输入'我要统计代码量'可以统计当前项目代码\n"
-            welcome_msg += "- 输入'统计代码: <目录路径>'可以统计指定目录的代码\n\n"
+            welcome_msg += "- 输入'我要统计代码量'会弹出配置界面，可以选择目录、语言和统计选项\n"
+            welcome_msg += "- 输入'统计代码: <目录路径>'可以快速统计指定目录的代码（使用默认设置）\n\n"
             # 使用线程安全的方式插入欢迎消息
             self._update_text_display(welcome_msg)
             # 设置关闭事件处理，确保可以点击×关闭
@@ -386,17 +663,17 @@ class DuckGame:
             
             # 立即更新窗口，确保内容显示
             dialog_window.update_idletasks()
-            # 调用一次update()确保窗口完全显示和事件可以处理
-            dialog_window.update()
+            # 立即调用一次update()，确保窗口和输入框可以接收事件
+            try:
+                dialog_window.update()
+            except:
+                pass
             
-            # 确保窗口获得焦点，输入框可以正常输入
-            # 标记需要设置焦点，将在主循环中延迟设置
+            # 确保窗口获得焦点
             dialog_window.focus_set()
-            dialog_window.focus_force()
+            # 不立即设置输入框焦点，避免影响中文输入法
+            # 标记需要设置焦点，将在主循环中延迟设置
             self._need_set_focus = True
-            
-            # 不再使用after循环，避免GIL问题
-            # UI更新将通过主循环中的定期update_idletasks()调用处理
             
             print(f"对话框已创建: {self.dialog_active}, 状态: {self.dialog_window.winfo_exists() if hasattr(self, 'dialog_window') else False}, 可见: {1 if hasattr(self, 'dialog_window') and self.dialog_window.winfo_viewable() else 0}")
             
@@ -481,22 +758,29 @@ class DuckGame:
             print(f"[DEBUG] _restore_dialog_geometry异常: {e}")
     
     def _set_input_focus(self):
-        """设置输入框焦点（在主循环中调用，确保窗口完全显示）"""
+        """设置输入框焦点（在主循环中调用，确保窗口完全显示，只设置一次）"""
         try:
             if hasattr(self, 'input_entry') and self.input_entry:
                 if hasattr(self, 'dialog_window') and self.dialog_window:
                     if self.dialog_window.winfo_exists():
+                        # 检查输入框是否已经有焦点，避免频繁设置
+                        try:
+                            focused_widget = self.dialog_window.focus_get()
+                            if focused_widget == self.input_entry:
+                                # 已经有焦点，不需要重复设置
+                                self._need_set_focus = False
+                                return
+                        except:
+                            pass
+                        
                         # 确保窗口获得焦点
                         self.dialog_window.focus_set()
-                        self.dialog_window.focus_force()
                         # 确保输入框可以使用（Entry默认就是NORMAL，但显式设置更安全）
                         self.input_entry.config(state=tk.NORMAL)
-                        # 确保输入框获得焦点（使用focus_force强制设置）
+                        # 确保输入框获得焦点（只设置一次，避免影响中文输入法）
                         self.input_entry.focus_set()
-                        self.input_entry.focus_force()
-                        # 再次更新确保焦点设置生效
+                        # 只使用update_idletasks()，避免在主循环中调用update()
                         self.dialog_window.update_idletasks()
-                        self.dialog_window.update()  # 处理焦点设置事件
                         # 标记焦点已设置
                         self._need_set_focus = False
                         print("[DEBUG] 输入框焦点已设置")
@@ -592,11 +876,8 @@ class DuckGame:
                 threading.Thread(target=self.start_ai_chat, args=(user_input,), daemon=True).start()
             
             elif "我要统计代码量" in user_input:
-                # 统计当前项目目录
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                self._update_text_display(f"唐老鸭: 好的！让我来统计当前项目代码量！\n目录: {current_dir}\n\n")
-                # 启动代码统计
-                threading.Thread(target=self.start_code_counting, args=(current_dir,), daemon=True).start()
+                # 标记需要创建配置对话框（在主循环中创建，避免GIL问题）
+                self._need_config_dialog = True
             
             elif user_input.startswith("统计代码:") or user_input.startswith("统计代码："):
                 # 解析目录路径（支持 Windows 盘符冒号）
@@ -875,8 +1156,17 @@ class DuckGame:
             # 使用线程安全的方式显示错误
             self._update_text_display(f"唐老鸭: 抱歉，AI服务出现了问题: {str(e)}\n\n")
     
-    def start_code_counting(self, target_dir=None):
-        """启动代码统计（可能在后台线程中运行）"""
+    def start_code_counting(self, target_dir=None, selected_languages=None, include_blank=True, include_comment=True, include_function_stats=True, include_c_function_stats=False):
+        """启动代码统计（可能在后台线程中运行）
+        
+        Args:
+            target_dir: 要统计的目录路径
+            selected_languages: 选中的语言集合，如果为None或空则统计所有语言
+            include_blank: 是否在报告中包含空行数
+            include_comment: 是否在报告中包含注释行数
+            include_function_stats: 是否统计Python函数信息
+            include_c_function_stats: 是否统计C/C++函数信息
+        """
         try:
             # 显示开始统计信息（使用线程安全的方式）
             self._update_text_display("唐老鸭: 正在统计代码量，请稍候...\n")        
@@ -885,11 +1175,36 @@ class DuckGame:
             if target_dir is None:
                 target_dir = os.path.dirname(os.path.abspath(__file__))
             
+            # 根据选择的语言构建include列表
+            include_patterns = []
+            if selected_languages and len(selected_languages) > 0:
+                # 根据语言找到对应的扩展名
+                ext_to_lang = self.code_counter.EXT_TO_LANGUAGE
+                lang_to_exts = {}
+                for ext, lang in ext_to_lang.items():
+                    if lang not in lang_to_exts:
+                        lang_to_exts[lang] = []
+                    lang_to_exts[lang].append(ext)
+                
+                # 构建include模式
+                for lang in selected_languages:
+                    if lang in lang_to_exts:
+                        for ext in lang_to_exts[lang]:
+                            include_patterns.append(f"**/*{ext}")
+            
             # 统计代码量
-            result = self.code_counter.count_code_by_language(target_dir)
+            result = self.code_counter.count_code_by_language(
+                target_dir, 
+                include=include_patterns if include_patterns else None
+            )
             summary = result["summary"]
             by_language = result["by_language"]
             elapsed_time = result["elapsed_time"]
+            
+            # 过滤语言（如果指定了语言）
+            if selected_languages and len(selected_languages) > 0:
+                filtered_by_language = {lang: stat for lang, stat in by_language.items() if lang in selected_languages}
+                by_language = filtered_by_language
             
             # 生成统计报告文本
             report_text = f"代码统计报告:\n"
@@ -898,35 +1213,66 @@ class DuckGame:
             report_text += f"总文件数: {summary.files}\n"
             report_text += f"总行数: {summary.total}\n"
             report_text += f"代码行数: {summary.code}\n"
-            report_text += f"注释行数: {summary.comment}\n"
-            report_text += f"空行数: {summary.blank}\n"
+            if include_comment:
+                report_text += f"注释行数: {summary.comment}\n"
+            if include_blank:
+                report_text += f"空行数: {summary.blank}\n"
             report_text += f"耗时: {elapsed_time:.3f} 秒\n\n"
-            report_text += f"按语言统计:\n"
-            report_text += f"{'语言':<20} {'文件数':<10} {'代码行数':<15}\n"
-            report_text += "-" * 50 + "\n"
             
-            # 按代码行数排序
-            sorted_langs = sorted(by_language.items(), key=lambda x: -x[1].code)
-            for lang, stat in sorted_langs[:10]:  # 只显示前10个
-                report_text += f"{lang:<20} {stat.files:<10} {stat.code:<15}\n"
+            if by_language:
+                report_text += f"按语言统计:\n"
+                report_text += f"{'语言':<20} {'文件数':<10} {'代码行数':<15}"
+                if include_comment:
+                    report_text += f" {'注释行数':<15}"
+                if include_blank:
+                    report_text += f" {'空行数':<15}"
+                report_text += "\n"
+                report_text += "-" * 80 + "\n"
+                
+                # 按代码行数排序
+                sorted_langs = sorted(by_language.items(), key=lambda x: -x[1].code)
+                for lang, stat in sorted_langs:  # 显示所有选中的语言
+                    report_text += f"{lang:<20} {stat.files:<10} {stat.code:<15}"
+                    if include_comment:
+                        report_text += f" {stat.comment:<15}"
+                    if include_blank:
+                        report_text += f" {stat.blank:<15}"
+                    report_text += "\n"
+            else:
+                report_text += "未找到匹配的代码文件。\n"
             
-            # 统计Python函数
-            function_stats = self.code_counter.count_python_functions(target_dir)
+            # 统计Python函数（如果启用）
+            function_stats = None
+            if include_function_stats:
+                function_stats = self.code_counter.count_python_functions(target_dir)
+                
+                if function_stats.total_functions > 0:
+                    report_text += f"\nPython函数统计:\n"
+                    report_text += f"总函数数: {function_stats.total_functions}\n"
+                    report_text += f"平均长度: {function_stats.mean_length:.2f} 行\n"
+                    report_text += f"中位数长度: {function_stats.median_length:.2f} 行\n"
+                    report_text += f"最小长度: {function_stats.min_length} 行\n"
+                    report_text += f"最大长度: {function_stats.max_length} 行\n"
             
-            if function_stats.total_functions > 0:
-                report_text += f"\nPython函数统计:\n"
-                report_text += f"总函数数: {function_stats.total_functions}\n"
-                report_text += f"平均长度: {function_stats.mean_length:.2f} 行\n"
-                report_text += f"中位数长度: {function_stats.median_length:.2f} 行\n"
-                report_text += f"最小长度: {function_stats.min_length} 行\n"
-                report_text += f"最大长度: {function_stats.max_length} 行\n"
+            # 统计C/C++函数（如果启用）
+            c_function_stats = None
+            if include_c_function_stats:
+                c_function_stats = self.code_counter.count_c_functions(target_dir)
+                
+                if c_function_stats.total_functions > 0:
+                    report_text += f"\nC/C++函数统计:\n"
+                    report_text += f"总函数数: {c_function_stats.total_functions}\n"
+                    report_text += f"平均长度: {c_function_stats.mean_length:.2f} 行\n"
+                    report_text += f"中位数长度: {c_function_stats.median_length:.2f} 行\n"
+                    report_text += f"最小长度: {c_function_stats.min_length} 行\n"
+                    report_text += f"最大长度: {c_function_stats.max_length} 行\n"
             
             # 显示文本结果（使用线程安全的方式）
             self._update_text_display(f"唐老鸭: 代码统计完成！\n{report_text}\n")
             
             # 打开图形化窗口（需要在主线程中调用）
             # 主线程显示图表（通过队列）
-            self._enqueue_show_charts(result, function_stats)
+            self._enqueue_show_charts(result, function_stats, c_function_stats)
             
         except Exception as e:
             print(f"代码统计错误: {e}")
@@ -935,7 +1281,7 @@ class DuckGame:
             # 使用线程安全的方式显示错误
             self._update_text_display(f"唐老鸭: 抱歉，代码统计出现了问题: {str(e)}\n\n")
     
-    def show_code_statistics_charts(self, code_result, function_stats):
+    def show_code_statistics_charts(self, code_result, function_stats=None, c_function_stats=None):
         """显示代码统计图表 - 使用matplotlib独立窗口"""
         try:
             import matplotlib
@@ -950,8 +1296,11 @@ class DuckGame:
             # 创建代码统计图表窗口
             self._create_code_stat_chart(code_result)
             
-            # 创建函数统计图表窗口
-            self._create_function_stat_chart(function_stats)
+            # 创建函数统计图表窗口（Python）- 始终显示，即使没有数据也显示0
+            self._create_function_stat_chart(function_stats, "Python")
+            
+            # 创建函数统计图表窗口（C/C++）- 始终显示，即使没有数据也显示0
+            self._create_function_stat_chart(c_function_stats, "C/C++")
             
         except ImportError:
             messagebox.showwarning("警告", "需要安装matplotlib才能显示图表:\npip install matplotlib")
@@ -1044,98 +1393,101 @@ class DuckGame:
             import traceback
             traceback.print_exc()
 
-    def _create_function_stat_chart(self, function_stats):
+    def _create_function_stat_chart(self, function_stats, lang_name="Python"):
         """创建函数统计图表 - matplotlib独立窗口"""
         try:
             import matplotlib.pyplot as plt
 
             lengths = []
-            summary_text = None
-            summary_vals = None
+            summary_vals = {
+                '均值': 0,
+                '中位数': 0,
+                '最小值': 0,
+                '最大值': 0,
+            }
 
             # 解析数据
-            try:
-                if hasattr(function_stats, 'functions'):
-                    funcs = getattr(function_stats, 'functions')
-                    for f in funcs:
-                        if hasattr(f, 'line_count'):
-                            lengths.append(int(getattr(f, 'line_count')))
-                        elif hasattr(f, 'length'):
-                            lengths.append(int(getattr(f, 'length')))
-                elif isinstance(function_stats, dict) and 'functions' in function_stats:
-                    for f in function_stats['functions']:
-                        if isinstance(f, dict):
-                            if 'line_count' in f:
-                                lengths.append(int(f['line_count']))
-                            elif 'length' in f:
-                                lengths.append(int(f['length']))
-                        elif hasattr(f, 'line_count'):
-                            lengths.append(int(f.line_count))
-                        elif hasattr(f, 'length'):
-                            lengths.append(int(f.length))
+            if function_stats:
+                try:
+                    if hasattr(function_stats, 'functions'):
+                        funcs = getattr(function_stats, 'functions')
+                        for f in funcs:
+                            if hasattr(f, 'line_count'):
+                                lengths.append(int(getattr(f, 'line_count')))
+                            elif hasattr(f, 'length'):
+                                lengths.append(int(getattr(f, 'length')))
+                    elif isinstance(function_stats, dict) and 'functions' in function_stats:
+                        for f in function_stats['functions']:
+                            if isinstance(f, dict):
+                                if 'line_count' in f:
+                                    lengths.append(int(f['line_count']))
+                                elif 'length' in f:
+                                    lengths.append(int(f['length']))
+                            elif hasattr(f, 'line_count'):
+                                lengths.append(int(f.line_count))
+                            elif hasattr(f, 'length'):
+                                lengths.append(int(f.length))
 
-                # 解析汇总
-                if hasattr(function_stats, 'mean_length'):
-                    mean_v = getattr(function_stats, 'mean_length', None)
-                    median_v = getattr(function_stats, 'median_length', None)
-                    min_v = getattr(function_stats, 'min_length', None)
-                    max_v = getattr(function_stats, 'max_length', None)
-                    summary_vals = {
-                        '均值': mean_v,
-                        '中位数': median_v,
-                        '最小': min_v,
-                        '最大': max_v,
-                    }
-                elif isinstance(function_stats, dict) and 'summary' in function_stats:
-                    s = function_stats['summary']
-                    summary_vals = {
-                        '均值': s.get('mean'),
-                        '中位数': s.get('median'),
-                        '最小': s.get('min'),
-                        '最大': s.get('max'),
-                    }
-            except Exception:
-                pass
+                    # 解析汇总
+                    if hasattr(function_stats, 'mean_length'):
+                        summary_vals['均值'] = getattr(function_stats, 'mean_length', 0) or 0
+                        summary_vals['中位数'] = getattr(function_stats, 'median_length', 0) or 0
+                        summary_vals['最小值'] = getattr(function_stats, 'min_length', 0) or 0
+                        summary_vals['最大值'] = getattr(function_stats, 'max_length', 0) or 0
+                    elif isinstance(function_stats, dict) and 'summary' in function_stats:
+                        s = function_stats['summary']
+                        summary_vals['均值'] = s.get('mean', 0) or 0
+                        summary_vals['中位数'] = s.get('median', 0) or 0
+                        summary_vals['最小值'] = s.get('min', 0) or 0
+                        summary_vals['最大值'] = s.get('max', 0) or 0
+                except Exception:
+                    pass
 
             # 创建独立的matplotlib窗口
             fig = plt.figure(figsize=(10, 6))
-            fig.canvas.manager.set_window_title('函数统计图表')
+            fig.canvas.manager.set_window_title(f'{lang_name}函数统计图表')
             ax = fig.add_subplot(111)
 
             if lengths:
                 # 直方图
                 ax.hist(lengths, bins=min(50, max(5, len(set(lengths)))), color="#00C853", edgecolor='black')
-                ax.set_title("Python 函数长度直方图", fontsize=12)
+                ax.set_title(f"{lang_name} 函数长度直方图", fontsize=12)
                 ax.set_xlabel("行数", fontsize=10)
                 ax.set_ylabel("函数个数", fontsize=10)
                 ax.tick_params(labelsize=9)
                 
-                # 如果有汇总数据，添加统计线
-                if summary_vals:
-                    if summary_vals.get('均值'):
-                        ax.axvline(summary_vals['均值'], color='red', linestyle='--', 
-                                  label=f"均值: {summary_vals['均值']:.1f}", linewidth=2)
-                    if summary_vals.get('中位数'):
-                        ax.axvline(summary_vals['中位数'], color='green', linestyle='--', 
-                                  label=f"中位数: {summary_vals['中位数']:.1f}", linewidth=2)
-                    ax.legend()
+                # 添加统计线（垂直参考线，不在图例中显示，因为右上角已有完整统计信息）
+                if summary_vals['均值'] > 0:
+                    ax.axvline(summary_vals['均值'], color='red', linestyle='--', linewidth=2, alpha=0.7)
+                if summary_vals['中位数'] > 0:
+                    ax.axvline(summary_vals['中位数'], color='green', linestyle='--', linewidth=2, alpha=0.7)
             else:
-                if summary_vals:
-                    # 使用汇总值画条形图
-                    labels = list(summary_vals.keys())
-                    values = [summary_vals[k] if summary_vals[k] is not None else 0 for k in labels]
-                    ax.bar(labels, values, color="#26A69A")
-                    ax.set_title("Python 函数长度统计", fontsize=12)
-                    ax.set_ylabel("行数", fontsize=10)
-                    ax.tick_params(labelsize=9)
-                else:
-                    return
+                # 如果没有数据，显示提示信息
+                ax.text(0.5, 0.5, f"没有找到{lang_name}函数统计数据", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                ax.set_title(f"{lang_name} 函数长度统计", fontsize=12)
             
-                plt.tight_layout()
+            # 在右上角统一显示所有统计信息（格式统一）
+            text_y = 0.95  # 距离顶部5%
+            text_x = 0.98  # 距离右侧2%
+            stats_text = (f"均值: {summary_vals['均值']:.1f}\n"
+                         f"中位数: {summary_vals['中位数']:.1f}\n"
+                         f"最小值: {summary_vals['最小值']}\n"
+                         f"最大值: {summary_vals['最大值']}")
+            ax.text(text_x, text_y, stats_text, 
+                   transform=ax.transAxes,
+                   fontsize=10,
+                   verticalalignment='top',
+                   horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            
+            plt.tight_layout()
             plt.show(block=False)  # 非阻塞显示
 
         except Exception as e:
             print(f"创建函数统计图表错误: {e}")
+            import traceback
+            traceback.print_exc()
 
     def switch_to_code_tab(self):
         """切换到代码统计标签页 - 已废弃，使用独立窗口"""
@@ -1169,10 +1521,10 @@ class DuckGame:
         except Exception as e:
             print(f"提交文本更新到队列失败: {e}")
 
-    def _enqueue_show_charts(self, code_result, function_stats):
+    def _enqueue_show_charts(self, code_result, function_stats=None, c_function_stats=None):
         """将显示图表的请求放入队列，由主线程处理。"""
         try:
-            self._ui_queue.put(("show_charts", code_result, function_stats), block=False)
+            self._ui_queue.put(("show_charts", code_result, function_stats, c_function_stats), block=False)
         except Exception as e:
             print(f"提交图表显示到队列失败: {e}")
 
@@ -1204,8 +1556,10 @@ class DuckGame:
                             import traceback
                             traceback.print_exc()
                 elif kind == "show_charts":
-                    code_result, function_stats = item[1], item[2]
-                    self.show_code_statistics_charts(code_result, function_stats)
+                    code_result = item[1]
+                    function_stats = item[2] if len(item) > 2 else None
+                    c_function_stats = item[3] if len(item) > 3 else None
+                    self.show_code_statistics_charts(code_result, function_stats, c_function_stats)
             except Exception as e:
                 print(f"处理UI队列项出错: {e}")
                 import traceback
@@ -1357,6 +1711,11 @@ class DuckGame:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                elif event.type == pygame.VIDEORESIZE:
+                    # 处理窗口大小改变事件
+                    # Pygame会自动更新屏幕大小，我们只需要更新配置
+                    self.config.SCREEN_WIDTH = event.w
+                    self.config.SCREEN_HEIGHT = event.h
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:  # 左键点击
                         self.handle_click(event.pos)
@@ -1367,49 +1726,40 @@ class DuckGame:
             # 渲染画面
             self.render()
             
-            # 定期更新Tkinter，确保after回调能够执行和处理事件
-            # 限制更新频率，避免影响pygame性能
-            # 只在有对话框时才更新，并且降低更新频率
-            if hasattr(self, '_root') and self._root and self.dialog_active:
+            # 定期更新Tkinter，确保输入和关闭事件能够被处理
+            # 直接在主循环中调用update()，但使用较低的频率和异常处理
+            if hasattr(self, '_root') and self._root and (self.dialog_active or hasattr(self, '_config_window')):
                 try:
-                    # 每帧都更新，确保事件能及时处理
+                    # 更新计数器
                     if hasattr(self, '_tk_update_counter'):
                         self._tk_update_counter += 1
                     else:
                         self._tk_update_counter = 0
                     
-                    # 每2帧更新一次UI（约33ms一次），确保输入响应及时
-                    if self._tk_update_counter % 2 == 0:
-                        # 先处理事件，确保事件循环处于活动状态
-                        try:
-                            # 调用update()处理所有挂起的事件，确保事件循环激活
-                            self._root.update()
-                        except tk.TclError:
-                            pass
-                        except Exception:
-                            pass
-                        
-                        # 然后处理UI队列中的更新请求
-                        self._process_ui_queue()
+                    # 每帧都调用update_idletasks()，确保UI更新
+                    self._root.update_idletasks()
                     
-                    # 每帧都处理事件（包括按键和关闭事件），确保输入和关闭按钮能响应
-                    # 如果没有在上面的分支中处理，这里再处理一次
-                    if self._tk_update_counter % 2 != 0:
-                        if hasattr(self, 'dialog_window') and self.dialog_window:
-                            try:
-                                # 调用update()处理所有挂起的事件
-                                # 这不会阻塞，因为如果没有事件会立即返回
-                                self._root.update()
-                            except tk.TclError:
-                                # Tcl错误通常可以忽略
-                                pass
-                            except Exception:
-                                # 其他错误也忽略，避免影响游戏运行
-                                pass
+                    # 每5帧（约83ms）调用一次update()，处理键盘和关闭事件
+                    # 这是关键：必须调用update()才能处理键盘和关闭事件
+                    # 频率适中，既能处理事件，又不会影响中文输入法的提示词框
+                    if self._tk_update_counter % 5 == 0:
+                        try:
+                            # 直接调用update()处理事件
+                            # 适中的频率，确保输入法提示词框正常显示
+                            self._root.update()
+                        except (tk.TclError, RuntimeError, Exception):
+                            # 忽略所有错误，确保程序继续运行
+                            pass
+                    
+                    # 处理UI队列中的更新请求
+                    try:
+                        self._process_ui_queue()
+                    except Exception:
+                        pass
                     
                     # 如果需要设置输入框焦点，在主循环中设置（延迟几帧确保窗口完全显示）
                     if hasattr(self, '_need_set_focus') and self._need_set_focus:
-                        if self._tk_update_counter > 5:  # 延迟约5帧（约83ms）再设置焦点
+                        if self._tk_update_counter > 10:  # 延迟约10帧（约167ms）再设置焦点
                             self._set_input_focus()
                 except Exception:
                     pass
@@ -1444,6 +1794,16 @@ class DuckGame:
         
         # 检查并创建对话框（如果需要）
         self._check_and_create_dialog()
+        
+        # 检查并创建配置对话框（如果需要）
+        if hasattr(self, '_need_config_dialog') and self._need_config_dialog:
+            self._need_config_dialog = False
+            try:
+                self._show_code_counting_dialog()
+            except Exception as e:
+                print(f"创建配置对话框时出错: {e}")
+                import traceback
+                traceback.print_exc()
 
 
 def main():
