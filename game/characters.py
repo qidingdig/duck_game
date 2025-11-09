@@ -345,6 +345,8 @@ class Duckling(Character):
         self.hat_color = None
         self.has_bow = True
         self.bow_color = (255, 0, 0)  # 统一红色蝴蝶结
+        # 确保颜色同步更新
+        self.color = self.body_color
     
     def switch_to_focused_theme(self):
         """切换到专注外观（工作主题）"""
@@ -352,6 +354,8 @@ class Duckling(Character):
         self.hat_color = (25, 25, 112)  # 统一深蓝色帽子
         self.has_bow = False
         self.bow_color = None
+        # 确保颜色同步更新
+        self.color = self.body_color
     
     def restore_original_appearance(self):
         """恢复初始随机外观"""
@@ -402,18 +406,66 @@ class Duckling(Character):
         pygame.draw.circle(screen, (0, 0, 0), 
                          (self.x + 2 * self.width // 3, eye_y), eye_size)
         
-        # 绘制嘴巴
+        # 绘制嘴巴（使用橙色椭圆，和唐老鸭一样）
         mouth_y = render_y + 2 * self.height // 3
-        pygame.draw.arc(screen, (0, 0, 0), 
-                       (self.x + self.width // 4, mouth_y - 5, 
-                        self.width // 2, 10), 0, math.pi, 2)
+        pygame.draw.ellipse(screen, (255, 165, 0),  # 橙色嘴巴
+                          (self.x + self.width // 4, mouth_y - 8, 
+                           self.width // 2, 16))
+        pygame.draw.ellipse(screen, (0, 0, 0), 
+                          (self.x + self.width // 4, mouth_y - 8, 
+                           self.width // 2, 16), 2)
         
-        # 绘制名字
-        font = pygame.font.Font(None, 20)
+        # 绘制名字（使用支持中文的字体）
+        font = self._get_chinese_font(20)
         text = font.render(self.name, True, (0, 0, 0))
         name_y_offset = -15 if not self.hat_color else -22
         text_rect = text.get_rect(center=(self.x + self.width // 2, render_y + name_y_offset))
         screen.blit(text, text_rect)
+    
+    @staticmethod
+    def _get_chinese_font(size):
+        """获取支持中文的字体"""
+        import os
+        import platform
+        
+        # Windows系统字体路径
+        if platform.system() == "Windows":
+            font_paths = [
+                "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑
+                "C:/Windows/Fonts/simsun.ttc",    # 宋体
+                "C:/Windows/Fonts/simhei.ttf",    # 黑体
+                "C:/Windows/Fonts/simkai.ttf",    # 楷体
+            ]
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    try:
+                        return pygame.font.Font(font_path, size)
+                    except:
+                        continue
+        
+        # 尝试使用pygame的SysFont查找中文字体
+        chinese_fonts = [
+            "microsoftyaheimicrosoftyaheiuimsyh",  # 微软雅黑
+            "simsun",                              # 宋体
+            "simhei",                              # 黑体
+            "simkai",                              # 楷体
+            "microsoftjhengheimicrosoftjhengheiui", # 微软正黑体
+        ]
+        for font_name in chinese_fonts:
+            try:
+                font = pygame.font.SysFont(font_name, size)
+                # 测试是否能显示中文
+                if font.size("中")[0] > 0:
+                    return font
+            except:
+                continue
+        
+        # 如果都失败，尝试使用默认字体
+        try:
+            return pygame.font.Font(None, size)
+        except:
+            # 最后的备选方案
+            return pygame.font.SysFont("arial", size)
     
     def start_random_movement(self):
         """开始随机移动"""

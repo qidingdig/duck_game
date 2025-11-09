@@ -200,6 +200,8 @@ sys.path.insert(0, current_dir)
 
 from utils.config import Config
 from services.advanced_code_counter import AdvancedCodeCounter
+from game.characters import Duckling
+import random
 
 class DuckGame:
     """主游戏类 - 修复版本"""
@@ -221,6 +223,17 @@ class DuckGame:
         # 角色位置
         self.donald_pos = self.config.DONALD_POSITION
         self.duckling_positions = self.config.DUCKLING_POSITIONS
+        
+        # 初始化小鸭对象列表（每个小鸭随机外观）
+        self.ducklings = []
+        for i, pos in enumerate(self.duckling_positions):
+            duckling = Duckling(
+                pos[0], pos[1],
+                self.config.CHARACTER_SIZE - 20,
+                self.config.CHARACTER_SIZE - 20,
+                f"汤小鸭{i+1}"
+            )
+            self.ducklings.append(duckling)
         
         # 对话框相关
         self.dialog_active = False
@@ -939,6 +952,9 @@ class DuckGame:
             'type_counts': [0, 0, 0],
             'type_amounts': [0.0, 0.0, 0.0]
         }
+        
+        # 切换小鸭外观为兴奋主题（红包主题）- 通过UI队列确保在主线程执行
+        self._ui_queue.put(("change_duckling_theme", "excited"))
     
     def spawn_red_packet(self):
         """生成红包"""
@@ -1073,6 +1089,10 @@ class DuckGame:
             
             # 更新位置
             self.duckling_positions[i] = (new_x, new_y)
+            # 同步更新Duckling对象的位置
+            if i < len(self.ducklings):
+                self.ducklings[i].x = new_x
+                self.ducklings[i].y = new_y
     
     def end_red_packet_game(self):
         """结束红包游戏"""
@@ -1081,6 +1101,17 @@ class DuckGame:
         
         # 重置汤小鸭位置到原始位置
         self.duckling_positions = self.duckling_positions_original.copy()
+        
+        # 恢复小鸭的原始外观 - 通过UI队列确保在主线程执行
+        self._ui_queue.put(("change_duckling_theme", "original"))
+        
+        # 同步位置（在主线程中执行）
+        for i, duckling in enumerate(self.ducklings):
+            if i < len(self.duckling_positions_original):
+                original_pos = self.duckling_positions_original[i]
+                duckling.x = original_pos[0]
+                duckling.y = original_pos[1]
+                duckling.reset_position()
         
         # 清理移动数据
         if hasattr(self, 'duckling_movement_data'):
@@ -1167,6 +1198,9 @@ class DuckGame:
             include_function_stats: 是否统计Python函数信息
             include_c_function_stats: 是否统计C/C++函数信息
         """
+        # 切换小鸭外观为专注主题（工作主题）- 通过UI队列确保在主线程执行
+        self._ui_queue.put(("change_duckling_theme", "focused"))
+        
         try:
             # 显示开始统计信息（使用线程安全的方式）
             self._update_text_display("唐老鸭: 正在统计代码量，请稍候...\n")        
@@ -1274,12 +1308,17 @@ class DuckGame:
             # 主线程显示图表（通过队列）
             self._enqueue_show_charts(result, function_stats, c_function_stats)
             
+            # 统计完成后，恢复小鸭的原始外观 - 通过UI队列确保在主线程执行
+            self._ui_queue.put(("change_duckling_theme", "original"))
+            
         except Exception as e:
             print(f"代码统计错误: {e}")
             import traceback
             traceback.print_exc()
             # 使用线程安全的方式显示错误
             self._update_text_display(f"唐老鸭: 抱歉，代码统计出现了问题: {str(e)}\n\n")
+            # 即使出错也要恢复小鸭的原始外观 - 通过UI队列确保在主线程执行
+            self._ui_queue.put(("change_duckling_theme", "original"))
     
     def show_code_statistics_charts(self, code_result, function_stats=None, c_function_stats=None):
         """显示代码统计图表 - 使用matplotlib独立窗口"""
@@ -1560,6 +1599,17 @@ class DuckGame:
                     function_stats = item[2] if len(item) > 2 else None
                     c_function_stats = item[3] if len(item) > 3 else None
                     self.show_code_statistics_charts(code_result, function_stats, c_function_stats)
+                elif kind == "change_duckling_theme":
+                    theme = item[1] if len(item) > 1 else "original"
+                    # 在主线程中切换小鸭外观
+                    if hasattr(self, 'ducklings') and self.ducklings:
+                        for duckling in self.ducklings:
+                            if theme == "excited":
+                                duckling.switch_to_excited_theme()
+                            elif theme == "focused":
+                                duckling.switch_to_focused_theme()
+                            elif theme == "original":
+                                duckling.restore_original_appearance()
             except Exception as e:
                 print(f"处理UI队列项出错: {e}")
                 import traceback
@@ -1673,23 +1723,9 @@ class DuckGame:
                           (self.donald_pos[0] + self.config.CHARACTER_SIZE // 4, mouth_y - 8, 
                            self.config.CHARACTER_SIZE // 2, 16))
         
-        # 绘制汤小鸭
-        for i, pos in enumerate(self.duckling_positions):
-            # 使用当前位置
-            current_x, current_y = pos
-            
-            duckling_rect = pygame.Rect(current_x, current_y, 
-                                      self.config.CHARACTER_SIZE - 20, self.config.CHARACTER_SIZE - 20)
-            pygame.draw.ellipse(self.screen, self.config.DUCKLING_COLOR, duckling_rect)
-            pygame.draw.ellipse(self.screen, (0, 0, 0), duckling_rect, 2)
-            
-            # 绘制眼睛
-            eye_size = 6
-            eye_y = current_y + (self.config.CHARACTER_SIZE - 20) // 3
-            pygame.draw.circle(self.screen, (0, 0, 0), 
-                             (current_x + (self.config.CHARACTER_SIZE - 20) // 3, eye_y), eye_size)
-            pygame.draw.circle(self.screen, (0, 0, 0), 
-                             (current_x + 2 * (self.config.CHARACTER_SIZE - 20) // 3, eye_y), eye_size)
+        # 绘制汤小鸭（使用Duckling对象）
+        for duckling in self.ducklings:
+            duckling.render(self.screen)
     
     def render_ui(self):
         """绘制UI信息"""
