@@ -616,7 +616,7 @@ class DuckGame:
                                 del self._code_counting_config[key]
                         self._code_counting_config = None
                     if hasattr(self, '_config_window'):
-                        self._config_window = Nonew
+                        self._config_window = None
                 except Exception:
                     pass  # 忽略清理时的错误
                 config_window.destroy()
@@ -1370,6 +1370,242 @@ class DuckGame:
             
             # 显示文本结果（使用线程安全的方式）
             self._update_text_display(f"唐老鸭: 代码统计完成！\n{report_text}\n")
+            
+            # 保存统计结果（如果选择了保存选项）
+            if not save_not:
+                saved_files = []
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_filename = f"code_statistics_{timestamp}"
+                
+                # 准备保存的数据
+                save_data = {
+                    'summary': {
+                        'target_dir': target_dir,
+                        'files': summary.files,
+                        'total': summary.total,
+                        'code': summary.code,
+                        'comment': summary.comment if include_comment else None,
+                        'blank': summary.blank if include_blank else None,
+                        'elapsed_time': elapsed_time
+                    },
+                    'by_language': {}
+                }
+                
+                # 添加按语言统计的数据
+                for lang, stat in by_language.items():
+                    lang_data = {
+                        'files': stat.files,
+                        'code': stat.code
+                    }
+                    if include_comment:
+                        lang_data['comment'] = stat.comment
+                    if include_blank:
+                        lang_data['blank'] = stat.blank
+                    save_data['by_language'][lang] = lang_data
+                
+                # 添加函数统计（如果启用）
+                if function_stats and function_stats.total_functions > 0:
+                    save_data['python_functions'] = {
+                        'total_functions': function_stats.total_functions,
+                        'mean_length': function_stats.mean_length,
+                        'median_length': function_stats.median_length,
+                        'min_length': function_stats.min_length,
+                        'max_length': function_stats.max_length
+                    }
+                
+                if c_function_stats and c_function_stats.total_functions > 0:
+                    save_data['c_functions'] = {
+                        'total_functions': c_function_stats.total_functions,
+                        'mean_length': c_function_stats.mean_length,
+                        'median_length': c_function_stats.median_length,
+                        'min_length': c_function_stats.min_length,
+                        'max_length': c_function_stats.max_length
+                    }
+                
+                # 保存为 CSV
+                if save_csv:
+                    try:
+                        csv_filename = f"{base_filename}.csv"
+                        csv_path = os.path.join(target_dir, csv_filename)
+                        with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+                            writer = csv.writer(f)
+                            # 写入摘要信息
+                            writer.writerow(['统计项', '数值'])
+                            writer.writerow(['统计目录', target_dir])
+                            writer.writerow(['总文件数', summary.files])
+                            writer.writerow(['总行数', summary.total])
+                            writer.writerow(['代码行数', summary.code])
+                            if include_comment:
+                                writer.writerow(['注释行数', summary.comment])
+                            if include_blank:
+                                writer.writerow(['空行数', summary.blank])
+                            writer.writerow(['耗时(秒)', f"{elapsed_time:.3f}"])
+                            writer.writerow([])  # 空行
+                            
+                            # 写入按语言统计
+                            writer.writerow(['语言', '文件数', '代码行数'] + 
+                                          (['注释行数'] if include_comment else []) + 
+                                          (['空行数'] if include_blank else []))
+                            for lang, stat in sorted(by_language.items(), key=lambda x: -x[1].code):
+                                row = [lang, stat.files, stat.code]
+                                if include_comment:
+                                    row.append(stat.comment)
+                                if include_blank:
+                                    row.append(stat.blank)
+                                writer.writerow(row)
+                            
+                            # 写入函数统计
+                            if function_stats and function_stats.total_functions > 0:
+                                writer.writerow([])
+                                writer.writerow(['Python函数统计'])
+                                writer.writerow(['总函数数', function_stats.total_functions])
+                                writer.writerow(['平均长度', f"{function_stats.mean_length:.2f}"])
+                                writer.writerow(['中位数长度', f"{function_stats.median_length:.2f}"])
+                                writer.writerow(['最小长度', function_stats.min_length])
+                                writer.writerow(['最大长度', function_stats.max_length])
+                            
+                            if c_function_stats and c_function_stats.total_functions > 0:
+                                writer.writerow([])
+                                writer.writerow(['C/C++函数统计'])
+                                writer.writerow(['总函数数', c_function_stats.total_functions])
+                                writer.writerow(['平均长度', f"{c_function_stats.mean_length:.2f}"])
+                                writer.writerow(['中位数长度', f"{c_function_stats.median_length:.2f}"])
+                                writer.writerow(['最小长度', c_function_stats.min_length])
+                                writer.writerow(['最大长度', c_function_stats.max_length])
+                        
+                        saved_files.append(csv_filename)
+                    except Exception as e:
+                        self._update_text_display(f"保存 CSV 文件失败: {str(e)}\n")
+                
+                # 保存为 JSON
+                if save_json:
+                    try:
+                        json_filename = f"{base_filename}.json"
+                        json_path = os.path.join(target_dir, json_filename)
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(save_data, f, ensure_ascii=False, indent=2)
+                        saved_files.append(json_filename)
+                    except Exception as e:
+                        self._update_text_display(f"保存 JSON 文件失败: {str(e)}\n")
+                
+                # 保存为 XLSX
+                if save_xlsx:
+                    try:
+                        try:
+                            import openpyxl
+                            from openpyxl.styles import Font, Alignment
+                        except ImportError:
+                            self._update_text_display("保存 XLSX 文件需要 openpyxl 库，请运行: pip install openpyxl\n")
+                        else:
+                            xlsx_filename = f"{base_filename}.xlsx"
+                            xlsx_path = os.path.join(target_dir, xlsx_filename)
+                            wb = openpyxl.Workbook()
+                            ws = wb.active
+                            ws.title = "代码统计"
+                            
+                            # 写入摘要信息
+                            ws['A1'] = '统计项'
+                            ws['B1'] = '数值'
+                            ws['A1'].font = Font(bold=True)
+                            ws['B1'].font = Font(bold=True)
+                            
+                            row = 2
+                            ws[f'A{row}'] = '统计目录'
+                            ws[f'B{row}'] = target_dir
+                            row += 1
+                            ws[f'A{row}'] = '总文件数'
+                            ws[f'B{row}'] = summary.files
+                            row += 1
+                            ws[f'A{row}'] = '总行数'
+                            ws[f'B{row}'] = summary.total
+                            row += 1
+                            ws[f'A{row}'] = '代码行数'
+                            ws[f'B{row}'] = summary.code
+                            row += 1
+                            if include_comment:
+                                ws[f'A{row}'] = '注释行数'
+                                ws[f'B{row}'] = summary.comment
+                                row += 1
+                            if include_blank:
+                                ws[f'A{row}'] = '空行数'
+                                ws[f'B{row}'] = summary.blank
+                                row += 1
+                            ws[f'A{row}'] = '耗时(秒)'
+                            ws[f'B{row}'] = f"{elapsed_time:.3f}"
+                            row += 2
+                            
+                            # 写入按语言统计
+                            headers = ['语言', '文件数', '代码行数']
+                            if include_comment:
+                                headers.append('注释行数')
+                            if include_blank:
+                                headers.append('空行数')
+                            
+                            for col, header in enumerate(headers, 1):
+                                cell = ws.cell(row=row, column=col, value=header)
+                                cell.font = Font(bold=True)
+                            
+                            row += 1
+                            for lang, stat in sorted(by_language.items(), key=lambda x: -x[1].code):
+                                ws.cell(row=row, column=1, value=lang)
+                                ws.cell(row=row, column=2, value=stat.files)
+                                ws.cell(row=row, column=3, value=stat.code)
+                                col = 4
+                                if include_comment:
+                                    ws.cell(row=row, column=col, value=stat.comment)
+                                    col += 1
+                                if include_blank:
+                                    ws.cell(row=row, column=col, value=stat.blank)
+                                row += 1
+                            
+                            # 写入函数统计
+                            if function_stats and function_stats.total_functions > 0:
+                                row += 1
+                                ws.cell(row=row, column=1, value='Python函数统计').font = Font(bold=True)
+                                row += 1
+                                ws.cell(row=row, column=1, value='总函数数')
+                                ws.cell(row=row, column=2, value=function_stats.total_functions)
+                                row += 1
+                                ws.cell(row=row, column=1, value='平均长度')
+                                ws.cell(row=row, column=2, value=f"{function_stats.mean_length:.2f}")
+                                row += 1
+                                ws.cell(row=row, column=1, value='中位数长度')
+                                ws.cell(row=row, column=2, value=f"{function_stats.median_length:.2f}")
+                                row += 1
+                                ws.cell(row=row, column=1, value='最小长度')
+                                ws.cell(row=row, column=2, value=function_stats.min_length)
+                                row += 1
+                                ws.cell(row=row, column=1, value='最大长度')
+                                ws.cell(row=row, column=2, value=function_stats.max_length)
+                            
+                            if c_function_stats and c_function_stats.total_functions > 0:
+                                row += 1
+                                ws.cell(row=row, column=1, value='C/C++函数统计').font = Font(bold=True)
+                                row += 1
+                                ws.cell(row=row, column=1, value='总函数数')
+                                ws.cell(row=row, column=2, value=c_function_stats.total_functions)
+                                row += 1
+                                ws.cell(row=row, column=1, value='平均长度')
+                                ws.cell(row=row, column=2, value=f"{c_function_stats.mean_length:.2f}")
+                                row += 1
+                                ws.cell(row=row, column=1, value='中位数长度')
+                                ws.cell(row=row, column=2, value=f"{c_function_stats.median_length:.2f}")
+                                row += 1
+                                ws.cell(row=row, column=1, value='最小长度')
+                                ws.cell(row=row, column=2, value=c_function_stats.min_length)
+                                row += 1
+                                ws.cell(row=row, column=1, value='最大长度')
+                                ws.cell(row=row, column=2, value=c_function_stats.max_length)
+                            
+                            wb.save(xlsx_path)
+                            saved_files.append(xlsx_filename)
+                    except Exception as e:
+                        self._update_text_display(f"保存 XLSX 文件失败: {str(e)}\n")
+                
+                # 显示保存结果
+                if saved_files:
+                    files_list = ", ".join(saved_files)
+                    self._update_text_display(f"统计结果已保存: {files_list}\n保存位置: {target_dir}\n\n")
             
             # 打开图形化窗口（需要在主线程中调用）
             # 主线程显示图表（通过队列）
