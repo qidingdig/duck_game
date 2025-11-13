@@ -42,7 +42,7 @@ class RedPacketService:
         self.game_thread = threading.Thread(target=self._run_game, daemon=True)
         self.game_thread.start()
         
-        return "红包游戏开始！唐老鸭正在发红包，汤小鸭们开始移动！"
+        return "红包游戏开始！唐老鸭正在发红包，唐小鸭们开始移动！"
     
     def _run_game(self):
         """运行红包游戏"""

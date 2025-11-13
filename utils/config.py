@@ -25,11 +25,11 @@ class Config:
         self.DONALD_POSITION = (100, 300)
         self.DONALD_COLOR = (255, 255, 0)  # 黄色
         
-        # 汤小鸭设置
+        # 唐小鸭设置
         self.DUCKLING_POSITIONS = [
-            (300, 200),  # 汤小鸭1
-            (500, 400),  # 汤小鸭2
-            (700, 150)   # 汤小鸭3
+            (300, 200),  # 唐小鸭1
+            (500, 400),  # 唐小鸭2
+            (700, 150)   # 唐小鸭3
         ]
         self.DUCKLING_COLOR = (255, 165, 0)  # 橙色
         

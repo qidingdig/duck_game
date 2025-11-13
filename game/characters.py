@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-角色系统 - 唐老鸭和汤小鸭
+角色系统 - 唐老鸭和唐小鸭
 """
 
 import pygame
@@ -338,6 +338,17 @@ class Duckling(Character):
         
         super().__init__(x, y, width, height, self.body_color, name)
         self.size = width  # 记录原始大小
+        
+        # 行为状态
+        self._spin_active = False
+        self._spin_center = (self.x, self.y)
+        self._spin_radius = 16
+        self._spin_angle = 0.0
+        self._fly_active = False
+        self._fly_origin = (self.x, self.y)
+        self._fly_amplitude = 20
+        self._fly_phase = 0.0
+        self._fly_speed = 0.15
     
     def switch_to_excited_theme(self):
         """切换到兴奋外观（红包主题）"""
@@ -366,8 +377,52 @@ class Duckling(Character):
         self.has_bow = self.original_has_bow
         self.bow_color = self.original_bow_color
     
+    def start_spin(self, radius: int = 16):
+        """启动原地转圈动画"""
+        self._spin_active = True
+        self._spin_center = (self.x, self.y)
+        self._spin_radius = radius
+        self._spin_angle = 0.0
+    
+    def stop_spin(self):
+        """停止转圈动画，恢复原位"""
+        if self._spin_active:
+            self.x, self.y = self._spin_center
+        self._spin_active = False
+        self._spin_angle = 0.0
+    
+    def start_fly(self, amplitude: int = 30):
+        """启动上下飞行动画"""
+        self._fly_active = True
+        self._fly_origin = (self.x, self.y)
+        self._fly_amplitude = amplitude
+        self._fly_phase = 0.0
+    
+    def stop_fly(self):
+        """停止飞行动画，恢复原位"""
+        if self._fly_active:
+            self.x, self.y = self._fly_origin
+        self._fly_active = False
+        self._fly_phase = 0.0
+    
+    def update_behavior_state(self, allow_position_override: bool = True):
+        """更新动态行为（转圈、飞行）"""
+        if self.animating:
+            self.update_bounce()
+        
+        if self._spin_active and allow_position_override:
+            self._spin_angle += 0.25
+            base_x, base_y = self._spin_center
+            self.x = base_x + math.cos(self._spin_angle) * self._spin_radius
+            self.y = base_y + math.sin(self._spin_angle) * self._spin_radius
+        
+        if self._fly_active and allow_position_override:
+            self._fly_phase += self._fly_speed
+            base_x, base_y = self._fly_origin
+            self.y = base_y - abs(math.sin(self._fly_phase)) * self._fly_amplitude
+    
     def render(self, screen):
-        """渲染汤小鸭"""
+        """渲染唐小鸭"""
         if not self.active:
             return
         

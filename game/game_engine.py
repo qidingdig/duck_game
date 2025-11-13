@@ -39,7 +39,7 @@ class GameEngine:
                 pos[0], pos[1],
                 self.config.CHARACTER_SIZE - 20,
                 self.config.CHARACTER_SIZE - 20,
-                f"汤小鸭{i+1}"
+                f"唐小鸭{i+1}"
             )
             self.ducklings.append(duckling)
         

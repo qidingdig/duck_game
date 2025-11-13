@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-唐老鸭小游戏整合项目 - 修复版本
-解决中文字符显示、AI模型错误、红包功能等问题
+唐老鸭小游戏整合项目
 """
 
 import sys
@@ -13,8 +12,10 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import threading
 import time
-import requests
+import requests  # 用于检查 Ollama 服务状态
 import json
+import csv
+from datetime import datetime
 from openai import OpenAI
 from queue import Queue
 import re
@@ -200,11 +201,12 @@ sys.path.insert(0, current_dir)
 
 from utils.config import Config
 from services.advanced_code_counter import AdvancedCodeCounter
+from services.duck_behavior_manager import DuckBehaviorManager
 from game.characters import Duckling
 import random
 
 class DuckGame:
-    """主游戏类 - 修复版本"""
+    """主游戏类 """
     
     def __init__(self):
         # 初始化配置
@@ -231,7 +233,7 @@ class DuckGame:
                 pos[0], pos[1],
                 self.config.CHARACTER_SIZE - 20,
                 self.config.CHARACTER_SIZE - 20,
-                f"汤小鸭{i+1}"
+                f"唐小鸭{i+1}"
             )
             self.ducklings.append(duckling)
         
@@ -254,6 +256,8 @@ class DuckGame:
         
         # 初始化增强代码统计工具
         self.code_counter = AdvancedCodeCounter()
+        # 初始化行为管理器
+        self.behavior_manager = DuckBehaviorManager(self._update_text_display)
         
         # 初始化tkinter相关
         self._root = None
@@ -365,7 +369,11 @@ class DuckGame:
                 'include_blank': tk.BooleanVar(self._root, value=True),
                 'include_comment': tk.BooleanVar(self._root, value=True),
                 'include_function_stats': tk.BooleanVar(self._root, value=True),
-                'include_c_function_stats': tk.BooleanVar(self._root, value=False)
+                'include_c_function_stats': tk.BooleanVar(self._root, value=False),
+                'save_not': tk.BooleanVar(self._root, value=True),  # 不保存（默认选中）
+                'save_csv': tk.BooleanVar(self._root, value=False),
+                'save_json': tk.BooleanVar(self._root, value=False),
+                'save_xlsx': tk.BooleanVar(self._root, value=False)
             }
             
             # 创建主容器（不使用滚动框架，直接使用普通Frame）
@@ -504,7 +512,54 @@ class DuckGame:
                           variable=self._code_counting_config['include_c_function_stats'], 
                           font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=5)
             
-            # 4. 按钮区域（固定在底部）
+            # 4. 保存选项区域
+            save_frame = tk.LabelFrame(main_frame, text="保存选项", font=("Arial", 11, "bold"), padx=10, pady=10)
+            save_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            # 定义保存选项的复选框
+            save_not_cb = tk.Checkbutton(save_frame, text="不保存", 
+                                        variable=self._code_counting_config['save_not'], 
+                                        font=("Arial", 10))
+            save_not_cb.pack(anchor=tk.W, padx=10, pady=5)
+            
+            save_csv_cb = tk.Checkbutton(save_frame, text="保存为 .csv", 
+                                         variable=self._code_counting_config['save_csv'], 
+                                         font=("Arial", 10))
+            save_csv_cb.pack(anchor=tk.W, padx=10, pady=5)
+            
+            save_json_cb = tk.Checkbutton(save_frame, text="保存为 .json", 
+                                          variable=self._code_counting_config['save_json'], 
+                                          font=("Arial", 10))
+            save_json_cb.pack(anchor=tk.W, padx=10, pady=5)
+            
+            save_xlsx_cb = tk.Checkbutton(save_frame, text="保存为 .xlsx", 
+                                          variable=self._code_counting_config['save_xlsx'], 
+                                          font=("Arial", 10))
+            save_xlsx_cb.pack(anchor=tk.W, padx=10, pady=5)
+            
+            # 定义更新保存选项状态的函数
+            def update_save_options():
+                """更新保存选项的状态：如果选择不保存，则禁用其他选项"""
+                if self._code_counting_config['save_not'].get():
+                    # 如果选择不保存，禁用其他选项并取消选中
+                    save_csv_cb.config(state=tk.DISABLED)
+                    save_json_cb.config(state=tk.DISABLED)
+                    save_xlsx_cb.config(state=tk.DISABLED)
+                    self._code_counting_config['save_csv'].set(False)
+                    self._code_counting_config['save_json'].set(False)
+                    self._code_counting_config['save_xlsx'].set(False)
+                else:
+                    # 如果取消不保存，启用其他选项
+                    save_csv_cb.config(state=tk.NORMAL)
+                    save_json_cb.config(state=tk.NORMAL)
+                    save_xlsx_cb.config(state=tk.NORMAL)
+            
+            # 绑定不保存选项的变化事件
+            self._code_counting_config['save_not'].trace('w', lambda *args: update_save_options())
+            # 初始化状态
+            update_save_options()
+            
+            # 5. 按钮区域（固定在底部）
             button_frame = tk.Frame(main_frame)
             button_frame.pack(fill=tk.X, padx=5, pady=5, side=tk.BOTTOM)
             
@@ -524,6 +579,12 @@ class DuckGame:
                 include_function_stats = self._code_counting_config['include_function_stats'].get()
                 include_c_function_stats = self._code_counting_config['include_c_function_stats'].get()
                 
+                # 收集保存选项
+                save_not = self._code_counting_config['save_not'].get()
+                save_csv = self._code_counting_config['save_csv'].get()
+                save_json = self._code_counting_config['save_json'].get()
+                save_xlsx = self._code_counting_config['save_xlsx'].get()
+                
                 # 不关闭配置窗口，保持打开以便多次统计
                 # 显示开始统计信息
                 self._update_text_display(f"唐老鸭: 好的！开始统计代码量！\n目录: {target_dir}\n")
@@ -534,7 +595,7 @@ class DuckGame:
                 # 启动代码统计（在后台线程）
                 threading.Thread(
                     target=self.start_code_counting,
-                    args=(target_dir, selected_languages, include_blank, include_comment, include_function_stats, include_c_function_stats),
+                    args=(target_dir, selected_languages, include_blank, include_comment, include_function_stats, include_c_function_stats, save_not, save_csv, save_json, save_xlsx),
                     daemon=True
                 ).start()
             
@@ -555,7 +616,7 @@ class DuckGame:
                                 del self._code_counting_config[key]
                         self._code_counting_config = None
                     if hasattr(self, '_config_window'):
-                        self._config_window = None
+                        self._config_window = Nonew
                 except Exception:
                     pass  # 忽略清理时的错误
                 config_window.destroy()
@@ -925,7 +986,7 @@ class DuckGame:
         """启动红包游戏"""
         try:
             # 显示游戏开始信息（使用线程安全的方式）
-            self._update_text_display("唐老鸭: 红包游戏开始！汤小鸭们开始移动！\n")
+            self._update_text_display("唐老鸭: 红包游戏开始！唐小鸭们开始移动！\n")
             
             # 启动红包游戏逻辑（在主线程中直接设置状态，不需要后台线程）
             self.start_red_packet_game_logic()
@@ -955,6 +1016,8 @@ class DuckGame:
         
         # 切换小鸭外观为兴奋主题（红包主题）- 通过UI队列确保在主线程执行
         self._ui_queue.put(("change_duckling_theme", "excited"))
+        # 触发红包行为
+        self.trigger_duck_behavior("red_packet")
     
     def spawn_red_packet(self):
         """生成红包"""
@@ -1158,6 +1221,8 @@ class DuckGame:
     def start_ai_chat(self, user_input):
         """启动AI对话"""
         try:
+            # 触发AI行为
+            self.trigger_duck_behavior("ai_chat")
             # 显示正在思考（使用线程安全的方式）
             self._update_text_display("唐老鸭: 让我想想...\n")
             
@@ -1187,7 +1252,7 @@ class DuckGame:
             # 使用线程安全的方式显示错误
             self._update_text_display(f"唐老鸭: 抱歉，AI服务出现了问题: {str(e)}\n\n")
     
-    def start_code_counting(self, target_dir=None, selected_languages=None, include_blank=True, include_comment=True, include_function_stats=True, include_c_function_stats=False):
+    def start_code_counting(self, target_dir=None, selected_languages=None, include_blank=True, include_comment=True, include_function_stats=True, include_c_function_stats=False, save_not=True, save_csv=False, save_json=False, save_xlsx=False):
         """启动代码统计（可能在后台线程中运行）
         
         Args:
@@ -1200,6 +1265,8 @@ class DuckGame:
         """
         # 切换小鸭外观为专注主题（工作主题）- 通过UI队列确保在主线程执行
         self._ui_queue.put(("change_duckling_theme", "focused"))
+        # 触发代码统计行为
+        self.trigger_duck_behavior("code_count")
         
         try:
             # 显示开始统计信息（使用线程安全的方式）
@@ -1567,6 +1634,13 @@ class DuckGame:
         except Exception as e:
             print(f"提交图表显示到队列失败: {e}")
 
+    def trigger_duck_behavior(self, event_name: str):
+        """将行为触发放入队列，确保在主线程中执行。"""
+        try:
+            self._ui_queue.put(("duck_behavior", event_name), block=False)
+        except Exception as e:
+            print(f"提交行为触发到队列失败: {e}")
+
     def _process_ui_queue(self, limit_per_frame: int = 20):
         """在主线程中调用：消费UI队列并执行对应Tk操作。"""
         processed = 0
@@ -1610,6 +1684,10 @@ class DuckGame:
                                 duckling.switch_to_focused_theme()
                             elif theme == "original":
                                 duckling.restore_original_appearance()
+                elif kind == "duck_behavior":
+                    event_name = item[1]
+                    if hasattr(self, 'behavior_manager'):
+                        self.behavior_manager.trigger(event_name, getattr(self, 'ducklings', []))
             except Exception as e:
                 print(f"处理UI队列项出错: {e}")
                 import traceback
@@ -1802,9 +1880,28 @@ class DuckGame:
             
             # 控制帧率
             clock.tick(60)
+        
+        # 主循环结束后清理资源
+        if hasattr(self, 'behavior_manager') and self.behavior_manager:
+            try:
+                self.behavior_manager.clear()
+                if hasattr(self.behavior_manager, 'speech_engine'):
+                    self.behavior_manager.speech_engine.shutdown()
+            except Exception:
+                pass
+        pygame.quit()
     
     def update(self):
         """更新游戏状态"""
+        # 更新小鸭行为状态
+        if hasattr(self, 'ducklings'):
+            allow_override = not getattr(self, 'red_packet_game_active', False)
+            for duckling in self.ducklings:
+                if hasattr(duckling, 'update_behavior_state'):
+                    duckling.update_behavior_state(allow_position_override=allow_override)
+        if hasattr(self, 'behavior_manager'):
+            self.behavior_manager.update()
+        
         # 更新红包游戏状态（如果有）
         if hasattr(self, 'red_packet_game_active') and self.red_packet_game_active:
             # 更新红包位置
@@ -1842,14 +1939,91 @@ class DuckGame:
                 traceback.print_exc()
 
 
+def check_dependencies():
+    """检查依赖包"""
+    required_packages = [
+        'pygame',
+        'requests',
+        'numpy',
+        'pandas',
+        'matplotlib'
+    ]
+    
+    missing_packages = []
+    
+    for package in required_packages:
+        try:
+            __import__(package)
+        except ImportError:
+            missing_packages.append(package)
+    
+    if missing_packages:
+        print("缺少以下依赖包:")
+        for package in missing_packages:
+            print(f"  - {package}")
+        print("\n请运行以下命令安装依赖:")
+        print("pip install -r requirements.txt")
+        return False
+    
+    return True
+
+def check_ollama():
+    """检查ollama服务"""
+    try:
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code == 200:
+            print("✓ Ollama服务正在运行")
+            return True
+        else:
+            print("✗ Ollama服务响应异常")
+            return False
+    except Exception as e:
+        print("✗ 无法连接到Ollama服务")
+        print("请确保ollama服务正在运行:")
+        print("1. 安装ollama: https://ollama.ai/")
+        print("2. 启动服务: ollama serve")
+        print("3. 下载模型: ollama pull deepseekr1:8b")
+        return False
+
 def main():
     """主函数"""
+    print("=== 唐老鸭小游戏启动检查 ===")
+    
+    # 检查Python版本
+    if sys.version_info < (3, 7):
+        print("✗ 需要Python 3.7或更高版本")
+        return
+    
+    print(f"✓ Python版本: {sys.version.split()[0]}")
+    
+    # 检查依赖包
+    if not check_dependencies():
+        print("\n请先安装依赖包后再运行游戏")
+        return
+    
+    print("✓ 依赖包检查通过")
+    
+    # 检查ollama服务（可选，不影响游戏启动）
+    ollama_available = check_ollama()
+    if not ollama_available:
+        print("\n注意: AI对话功能可能无法使用")
+        print("但红包游戏和代码统计功能仍然可用")
+    
+    print("\n=== 启动游戏 ===")
+    
     try:
         game = DuckGame()
         game.run()
+    except KeyboardInterrupt:
+        print("\n游戏被用户中断")
     except Exception as e:
-        print(f"游戏启动失败: {e}")
-        messagebox.showerror("错误", f"游戏启动失败: {e}")
+        print(f"\n游戏启动失败: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            messagebox.showerror("错误", f"游戏启动失败: {e}")
+        except:
+            pass
 
 if __name__ == "__main__":
     main()

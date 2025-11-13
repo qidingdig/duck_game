@@ -68,15 +68,15 @@ class RedPacket:
         packet_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         
         # 绘制红包形状（根据类型绘制不同形状）
-        if self.packet_type == 0:  # 小红包 - 矩形
+        if self.packet_type == 0:  # 小红包
             pygame.draw.rect(packet_surface, self.color, (0, 0, self.width, self.height))
             pygame.draw.rect(packet_surface, (0, 0, 0), (0, 0, self.width, self.height), 2)
-        elif self.packet_type == 1:  # 中红包 - 圆角矩形
+        elif self.packet_type == 1:  # 中红包
             pygame.draw.rect(packet_surface, self.color, (0, 0, self.width, self.height), 
                            border_radius=10)
             pygame.draw.rect(packet_surface, (0, 0, 0), (0, 0, self.width, self.height), 
                            2, border_radius=10)
-        else:  # 大红包 - 椭圆
+        else:  # 大红包
             pygame.draw.ellipse(packet_surface, self.color, (0, 0, self.width, self.height))
             pygame.draw.ellipse(packet_surface, (0, 0, 0), (0, 0, self.width, self.height), 2)
         
