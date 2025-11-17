@@ -1011,7 +1011,8 @@ class DuckGame:
             'total_count': 0,
             'total_amount': 0.0,
             'type_counts': [0, 0, 0],
-            'type_amounts': [0.0, 0.0, 0.0]
+            'type_amounts': [0.0, 0.0, 0.0],
+            'duckling_stats': {}  # 记录每个小鸭抢到的红包 {小鸭索引: {'count': 数量, 'amount': 金额}}
         }
         
         # 切换小鸭外观为兴奋主题（红包主题）- 通过UI队列确保在主线程执行
@@ -1057,11 +1058,41 @@ class DuckGame:
             packet['x'] += packet['dx']
             packet['y'] += packet['dy']
             
-            # 检查边界碰撞
+            # 检查红包与小鸭的碰撞
+            packet_rect = pygame.Rect(packet['x'], packet['y'], packet['size'][0], packet['size'][1])
+            duckling_caught = False
+            
+            # 遍历所有小鸭，检查碰撞
+            for i, duckling_pos in enumerate(self.duckling_positions):
+                duckling_size = self.config.CHARACTER_SIZE - 20
+                duckling_rect = pygame.Rect(duckling_pos[0], duckling_pos[1], duckling_size, duckling_size)
+                
+                if packet_rect.colliderect(duckling_rect):
+                    # 小鸭抢到了红包
+                    duckling_caught = True
+                    
+                    # 初始化小鸭统计（如果还没有）
+                    if i not in self.statistics['duckling_stats']:
+                        self.statistics['duckling_stats'][i] = {'count': 0, 'amount': 0.0}
+                    
+                    # 记录小鸭抢到的红包
+                    self.statistics['duckling_stats'][i]['count'] += 1
+                    self.statistics['duckling_stats'][i]['amount'] += packet['amount']
+                    
+                    # 标记红包为非激活并移除
+                    packet['active'] = False
+                    self.red_packets.remove(packet)
+                    break  # 一个红包只能被一个小鸭抢到
+            
+            # 如果小鸭已经抢到了，跳过边界检测
+            if duckling_caught:
+                continue
+            
+            # 检查边界碰撞（只有没被小鸭抢到的红包才检查）
             if (packet['x'] <= 0 or packet['x'] >= self.config.SCREEN_WIDTH - packet['size'][0] or
                 packet['y'] <= 0 or packet['y'] >= self.config.SCREEN_HEIGHT - packet['size'][1]):
                 
-                # 红包碰壁，统计金额
+                # 红包碰壁，统计为用户抢到的金额
                 self.statistics['total_count'] += 1
                 self.statistics['total_amount'] += packet['amount']
                 self.statistics['type_counts'][packet['type']] += 1
@@ -1183,11 +1214,25 @@ class DuckGame:
         # 显示统计结果（确保statistics存在）
         if hasattr(self, 'statistics') and self.statistics:
             result = f"红包游戏统计:\n"
-            result += f"总红包数: {self.statistics['total_count']}\n"
-            result += f"总金额: ¥{self.statistics['total_amount']:.2f}\n"
-            result += f"小红包: {self.statistics['type_counts'][0]}个, ¥{self.statistics['type_amounts'][0]:.2f}\n"
-            result += f"中红包: {self.statistics['type_counts'][1]}个, ¥{self.statistics['type_amounts'][1]:.2f}\n"
-            result += f"大红包: {self.statistics['type_counts'][2]}个, ¥{self.statistics['type_amounts'][2]:.2f}\n"
+            result += f"{'='*50}\n"
+            
+            # 显示小鸭抢到的红包
+            duckling_stats = self.statistics.get('duckling_stats', {})
+            if duckling_stats:
+                result += f"小鸭抢到的红包:\n"
+                for duckling_idx in sorted(duckling_stats.keys()):
+                    stats = duckling_stats[duckling_idx]
+                    duckling_name = f"唐小鸭{duckling_idx + 1}"
+                    result += f"  {duckling_name}: {stats['count']}个, 总金额 ¥{stats['amount']:.2f}\n"
+                result += f"\n"
+            
+            # 显示用户抢到的红包（碰壁的红包）
+            result += f"您抢到的红包:\n"
+            result += f"  总红包数: {self.statistics['total_count']}\n"
+            result += f"  总金额: ¥{self.statistics['total_amount']:.2f}\n"
+            result += f"  小红包: {self.statistics['type_counts'][0]}个, ¥{self.statistics['type_amounts'][0]:.2f}\n"
+            result += f"  中红包: {self.statistics['type_counts'][1]}个, ¥{self.statistics['type_amounts'][1]:.2f}\n"
+            result += f"  大红包: {self.statistics['type_counts'][2]}个, ¥{self.statistics['type_amounts'][2]:.2f}\n"
             
             # 使用线程安全的方式显示结果
             self._update_text_display(f"唐老鸭: 红包游戏结束！\n{result}\n")
@@ -1624,7 +1669,7 @@ class DuckGame:
             self._ui_queue.put(("change_duckling_theme", "original"))
     
     def show_code_statistics_charts(self, code_result, function_stats=None, c_function_stats=None):
-        """显示代码统计图表 - 使用matplotlib独立窗口"""
+        """显示代码统计图表 - 整合到一个窗口中"""
         try:
             import matplotlib
             matplotlib.use('TkAgg')  # 使用TkAgg后端
@@ -1635,14 +1680,8 @@ class DuckGame:
                 pass
             import matplotlib.pyplot as plt
             
-            # 创建代码统计图表窗口
-            self._create_code_stat_chart(code_result)
-            
-            # 创建函数统计图表窗口（Python）- 始终显示，即使没有数据也显示0
-            self._create_function_stat_chart(function_stats, "Python")
-            
-            # 创建函数统计图表窗口（C/C++）- 始终显示，即使没有数据也显示0
-            self._create_function_stat_chart(c_function_stats, "C/C++")
+            # 创建整合的图表窗口（2x2布局）
+            self._create_integrated_chart(code_result, function_stats, c_function_stats)
             
         except ImportError:
             messagebox.showwarning("警告", "需要安装matplotlib才能显示图表:\npip install matplotlib")
@@ -1650,6 +1689,234 @@ class DuckGame:
             print(f"显示图表错误: {e}")
             messagebox.showerror("错误", f"显示图表时出错: {str(e)}")
 
+    def _create_integrated_chart(self, code_result, function_stats=None, c_function_stats=None):
+        """创建整合的代码统计图表 - 所有图表在一个窗口中（2x2布局）"""
+        try:
+            import matplotlib.pyplot as plt
+            
+            # 创建窗口，包含2x2的子图布局（缩小尺寸）
+            fig = plt.figure(figsize=(12, 9))
+            fig.canvas.manager.set_window_title('代码统计图表')
+            
+            # 解析代码统计数据
+            labels = []
+            values = []
+            try:
+                if isinstance(code_result, dict) and "by_language" in code_result:
+                    by_language = code_result["by_language"]
+                    for lang, stat in by_language.items():
+                        code_lines = None
+                        if hasattr(stat, 'code'):
+                            code_lines = getattr(stat, 'code')
+                        elif isinstance(stat, dict) and 'code' in stat:
+                            code_lines = stat['code']
+                        elif isinstance(stat, (int, float)):
+                            code_lines = int(stat)
+                        if code_lines is None or code_lines == 0:
+                            continue
+                        labels.append(str(lang))
+                        values.append(int(code_lines))
+                elif hasattr(code_result, 'items'):
+                    for lang, stat in code_result.items():
+                        if lang == "summary" or lang == "elapsed_time":
+                            continue
+                        code_lines = None
+                        if hasattr(stat, 'code'):
+                            code_lines = getattr(stat, 'code')
+                        elif isinstance(stat, dict) and 'code' in stat:
+                            code_lines = stat['code']
+                        elif isinstance(stat, (int, float)):
+                            code_lines = int(stat)
+                        if code_lines is None or code_lines == 0:
+                            continue
+                        labels.append(str(lang))
+                        values.append(int(code_lines))
+            except Exception as e:
+                print(f"[DEBUG] 解析代码统计数据错误: {e}")
+                return
+            
+            # 按代码行数排序（降序）
+            if labels:
+                sorted_data = sorted(zip(labels, values), key=lambda x: -x[1])
+                labels = [lang for lang, _ in sorted_data]
+                values = [val for _, val in sorted_data]
+            
+            # 子图1：各语言代码行数柱状图（左上）
+            ax1 = fig.add_subplot(2, 2, 1)
+            if labels:
+                ax1.bar(labels, values, color="#4C9AFF")
+                ax1.set_title("各语言代码行数（柱状图）", fontsize=10, fontweight='bold')
+                ax1.set_ylabel("行数", fontsize=9)
+                ax1.tick_params(axis='x', rotation=45, labelsize=8)
+                ax1.tick_params(axis='y', labelsize=8)
+            else:
+                ax1.text(0.5, 0.5, "没有找到代码统计数据", 
+                        ha='center', va='center', transform=ax1.transAxes, fontsize=10)
+                ax1.set_title("各语言代码行数（柱状图）", fontsize=10, fontweight='bold')
+            
+            # 子图2：各语言占比饼图（右上）
+            ax2 = fig.add_subplot(2, 2, 2)
+            if labels:
+                ax2.pie(values, labels=labels, autopct='%1.1f%%', startangle=140, textprops={'fontsize': 8})
+                ax2.set_title("各语言占比（饼图）", fontsize=10, fontweight='bold')
+            else:
+                ax2.text(0.5, 0.5, "没有找到代码统计数据", 
+                        ha='center', va='center', transform=ax2.transAxes, fontsize=10)
+                ax2.set_title("各语言占比（饼图）", fontsize=10, fontweight='bold')
+            
+            # 子图3：Python函数长度直方图（左下）
+            ax3 = fig.add_subplot(2, 2, 3)
+            self._plot_function_stats(ax3, function_stats, "Python")
+            
+            # 子图4：C/C++函数长度直方图（右下）
+            ax4 = fig.add_subplot(2, 2, 4)
+            self._plot_function_stats(ax4, c_function_stats, "C/C++")
+            
+            # 使用 tight_layout 确保布局紧凑且不变形，调整 padding
+            plt.tight_layout(pad=2.0, h_pad=2.5, w_pad=2.5)
+
+            def _refresh_layout(event=None):
+                """在窗口大小变化时刷新布局，避免图表拉伸变形"""
+                try:
+                    fig.tight_layout(pad=2.0, h_pad=2.5, w_pad=2.5)
+                    fig.canvas.draw_idle()
+                except Exception:
+                    pass
+
+            # 监听窗口缩放事件，动态刷新布局
+            fig.canvas.mpl_connect('resize_event', _refresh_layout)
+
+            # 显示窗口（非阻塞）
+            plt.show(block=False)
+            
+            # 在显示后设置窗口属性，参考配置窗口的实现方式
+            # 只设置最小大小，允许自由缩放（不设置maxsize，不调用resizable(False, False)）
+            def configure_window():
+                try:
+                    # 获取 matplotlib 窗口（TkAgg 后端）
+                    manager = fig.canvas.manager
+                    window = None
+                    
+                    # 尝试多种方式获取窗口对象
+                    if hasattr(manager, 'window'):
+                        window = manager.window
+                    elif hasattr(fig.canvas, 'tk'):
+                        window = fig.canvas.tk
+                    elif hasattr(fig.canvas, 'master'):
+                        window = fig.canvas.master
+                    
+                    if window:
+                        # 只设置最小大小，允许自由缩放（参考配置窗口的实现）
+                        # 不设置maxsize，不调用resizable(False, False)
+                        if hasattr(window, 'wm_minsize'):
+                            # 设置最小大小，但允许缩放
+                            window.wm_minsize(600, 450)  # 最小尺寸，但可以放大
+                        # 确保窗口可以缩放（默认应该是可以的，但显式设置一下）
+                        if hasattr(window, 'wm_resizable'):
+                            window.wm_resizable(True, True)  # 显式启用缩放
+                except Exception:
+                    # 如果设置失败，忽略错误
+                    pass
+            
+            # 延迟设置窗口属性，确保窗口已完全创建
+            try:
+                manager = fig.canvas.manager
+                if hasattr(manager, 'window'):
+                    window = manager.window
+                    if hasattr(window, 'after'):
+                        window.after(100, configure_window)  # 100ms 后执行
+                    else:
+                        configure_window()
+                else:
+                    configure_window()
+            except Exception:
+                pass
+            
+        except Exception as e:
+            print(f"创建整合图表错误: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _plot_function_stats(self, ax, function_stats, lang_name="Python"):
+        """在指定的axes上绘制函数统计图表"""
+        lengths = []
+        summary_vals = {
+            '均值': 0,
+            '中位数': 0,
+            '最小值': 0,
+            '最大值': 0,
+        }
+        
+        # 解析数据
+        if function_stats:
+            try:
+                if hasattr(function_stats, 'functions'):
+                    funcs = getattr(function_stats, 'functions')
+                    for f in funcs:
+                        if hasattr(f, 'line_count'):
+                            lengths.append(int(getattr(f, 'line_count')))
+                        elif hasattr(f, 'length'):
+                            lengths.append(int(getattr(f, 'length')))
+                elif isinstance(function_stats, dict) and 'functions' in function_stats:
+                    for f in function_stats['functions']:
+                        if isinstance(f, dict):
+                            if 'line_count' in f:
+                                lengths.append(int(f['line_count']))
+                            elif 'length' in f:
+                                lengths.append(int(f['length']))
+                        elif hasattr(f, 'line_count'):
+                            lengths.append(int(f.line_count))
+                        elif hasattr(f, 'length'):
+                            lengths.append(int(f.length))
+                
+                # 解析汇总
+                if hasattr(function_stats, 'mean_length'):
+                    summary_vals['均值'] = getattr(function_stats, 'mean_length', 0) or 0
+                    summary_vals['中位数'] = getattr(function_stats, 'median_length', 0) or 0
+                    summary_vals['最小值'] = getattr(function_stats, 'min_length', 0) or 0
+                    summary_vals['最大值'] = getattr(function_stats, 'max_length', 0) or 0
+                elif isinstance(function_stats, dict) and 'summary' in function_stats:
+                    s = function_stats['summary']
+                    summary_vals['均值'] = s.get('mean', 0) or 0
+                    summary_vals['中位数'] = s.get('median', 0) or 0
+                    summary_vals['最小值'] = s.get('min', 0) or 0
+                    summary_vals['最大值'] = s.get('max', 0) or 0
+            except Exception:
+                pass
+        
+        if lengths:
+            # 直方图
+            ax.hist(lengths, bins=min(50, max(5, len(set(lengths)))), color="#00C853", edgecolor='black')
+            ax.set_title(f"{lang_name} 函数长度直方图", fontsize=10, fontweight='bold')
+            ax.set_xlabel("行数", fontsize=9)
+            ax.set_ylabel("函数个数", fontsize=9)
+            ax.tick_params(labelsize=8)
+            
+            # 添加统计线
+            if summary_vals['均值'] > 0:
+                ax.axvline(summary_vals['均值'], color='red', linestyle='--', linewidth=1.5, alpha=0.7, label='均值')
+            if summary_vals['中位数'] > 0:
+                ax.axvline(summary_vals['中位数'], color='green', linestyle='--', linewidth=1.5, alpha=0.7, label='中位数')
+        else:
+            # 如果没有数据，显示提示信息
+            ax.text(0.5, 0.5, f"没有找到{lang_name}函数统计数据", 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=10)
+            ax.set_title(f"{lang_name} 函数长度统计", fontsize=10, fontweight='bold')
+        
+        # 在右上角显示统计信息（缩小字体）
+        text_y = 0.95
+        text_x = 0.98
+        stats_text = (f"均值: {summary_vals['均值']:.1f}\n"
+                     f"中位数: {summary_vals['中位数']:.1f}\n"
+                     f"最小值: {summary_vals['最小值']}\n"
+                     f"最大值: {summary_vals['最大值']}")
+        ax.text(text_x, text_y, stats_text, 
+               transform=ax.transAxes,
+               fontsize=8,
+               verticalalignment='top',
+               horizontalalignment='right',
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    
     def _create_code_stat_chart(self, code_result):
         """创建代码统计图表 - matplotlib独立窗口"""
         try:
