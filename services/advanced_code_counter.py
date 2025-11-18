@@ -107,11 +107,19 @@ class AdvancedCodeCounter:
     EXT_TO_LANGUAGE = {
         ".py": "Python",
         ".pyw": "Python",
+        ".pyi": "Python Stub",
+        ".pyx": "Cython",
+        ".pxd": "Cython Header",
+        ".pxi": "Cython Include",
         ".java": "Java",
         ".c": "C",
         ".cpp": "C++",
+        ".cc": "C++",
+        ".cxx": "C++",
         ".h": "C/C++ Header",
         ".hpp": "C++ Header",
+        ".hh": "C++ Header",
+        ".hin": "C/C++ Header",
         ".cs": "C#",
         ".js": "JavaScript",
         ".ts": "TypeScript",
@@ -129,16 +137,39 @@ class AdvancedCodeCounter:
         ".html": "HTML",
         ".htm": "HTML",
         ".css": "CSS",
+        ".pcss": "PostCSS",
+        ".postcss": "PostCSS",
         ".scss": "SCSS",
         ".less": "LESS",
         ".xml": "XML",
         ".json": "JSON",
         ".yaml": "YAML",
         ".yml": "YAML",
+        ".cfg": "Config",
+        ".conf": "Config",
+        ".properties": "Properties",
+        ".toml": "TOML",
+        ".gradle": "Gradle",
+        ".md": "Markdown",
+        ".markdown": "Markdown",
+        ".rst": "reStructuredText",
+        ".tex": "TeX",
+        ".sty": "TeX",
+        ".cls": "TeX",
+        ".csv": "CSV",
+        ".tsv": "TSV",
+        ".txt": "Text",
+        ".mk": "Makefile",
+        ".make": "Makefile",
+        ".gmk": "Makefile",
+        ".thrift": "Thrift",
+        ".ps1": "PowerShell",
+        ".psm1": "PowerShell",
         ".sh": "Shell",
+        ".bash": "Shell",
+        ".zsh": "Shell",
         ".bat": "Batch",
         ".cmd": "Batch",
-        ".ps1": "PowerShell",
         ".m": "MATLAB",
         ".r": "R",
     }
@@ -206,9 +237,33 @@ class AdvancedCodeCounter:
         }
         
         # 文本类型文件扩展名
-        self.text_like_exts = set(self.single_line_comments.keys()) | set(self.multi_line_comments.keys()) | {
-            ".txt", ".md", ".csv", ".tsv", ".cfg", ".conf", ".gradle", ".properties"
-        }
+        self.text_like_exts = (
+            set(self.single_line_comments.keys())
+            | set(self.multi_line_comments.keys())
+            | set(self.EXT_TO_LANGUAGE.keys())
+            | {
+                ".txt",
+                ".md",
+                ".csv",
+                ".tsv",
+                ".cfg",
+                ".conf",
+                ".gradle",
+                ".properties",
+            }
+        )
+
+        self._default_exclude = [
+            "**/.git/**",
+            "**/.svn/**",
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/__pycache__/**",
+            "**/.vscode/**",
+            "**/.VSCodeCounter/**",
+        ]
         
         # 二进制文件魔术头
         self.binary_magic_prefixes = [
@@ -337,10 +392,11 @@ class AdvancedCodeCounter:
             if not isinstance(path, str):
                 return None
             
-            if self.is_binary(path):
+            ext = os.path.splitext(path)[1].lower()
+            # 对于常见文本/源码扩展名跳过二进制检测，以免误判
+            if ext not in self.text_like_exts and self.is_binary(path):
                 return None
             stat = FileStat(path=path)
-            ext = os.path.splitext(path)[1].lower()
             in_block: Optional[Tuple[str, str]] = None
             encoding = self.detect_encoding(path)
             with open(path, "r", encoding=encoding, errors="replace") as f:
@@ -399,7 +455,7 @@ class AdvancedCodeCounter:
     def count_python_functions(self, root: str, exclude: List[str] = None) -> PythonFunctionStats:
         """统计Python函数长度"""
         if exclude is None:
-            exclude = ["**/.git/**", "**/.svn/**", "**/node_modules/**", "**/.venv/**", "**/dist/**", "**/build/**", "**/__pycache__/**"]
+            exclude = list(self._default_exclude)
         
         all_functions = []
         
@@ -653,7 +709,7 @@ class AdvancedCodeCounter:
     def count_c_functions(self, root: str, exclude: List[str] = None) -> CFunctionStats:
         """统计C/C++函数长度"""
         if exclude is None:
-            exclude = ["**/.git/**", "**/.svn/**", "**/node_modules/**", "**/.venv/**", "**/dist/**", "**/build/**", "**/__pycache__/**"]
+            exclude = list(self._default_exclude)
         
         all_functions = []
         
@@ -690,7 +746,7 @@ class AdvancedCodeCounter:
         if include is None:
             include = []
         if exclude is None:
-            exclude = ["**/.git/**", "**/.svn/**", "**/node_modules/**", "**/.venv/**", "**/dist/**", "**/build/**"]
+            exclude = list(self._default_exclude)
         
         per_file: List[FileStat] = []
         for f in self.iter_files(path, include, exclude):
