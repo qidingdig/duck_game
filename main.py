@@ -15,10 +15,13 @@ import time
 import requests  # 用于检查 Ollama 服务状态
 import json
 import csv
+import warnings
 from datetime import datetime
 from openai import OpenAI
 from queue import Queue
 import re
+
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 # Windows API用于获取窗口实际大小
 try:
@@ -375,6 +378,13 @@ class DuckGame:
                 'save_json': tk.BooleanVar(self._root, value=False),
                 'save_xlsx': tk.BooleanVar(self._root, value=False)
             }
+            self._detail_language_vars = {
+                "C": tk.BooleanVar(self._root, value=False),
+                "C++": tk.BooleanVar(self._root, value=False),
+                "Java": tk.BooleanVar(self._root, value=False),
+                "Python": tk.BooleanVar(self._root, value=False),
+                "C#": tk.BooleanVar(self._root, value=False),
+            }
             
             # 创建主容器（不使用滚动框架，直接使用普通Frame）
             main_frame = tk.Frame(config_window)
@@ -559,7 +569,18 @@ class DuckGame:
             # 初始化状态
             update_save_options()
             
-            # 5. 按钮区域（固定在底部）
+            # 5. 语言明细表选项
+            detail_frame = tk.LabelFrame(main_frame, text="语言明细表（勾选后在图表展示并可随导出）",
+                                         font=("Arial", 11, "bold"), padx=10, pady=10)
+            detail_frame.pack(fill=tk.X, padx=5, pady=5)
+            tk.Label(detail_frame, text="请选择需要生成详细表格的语言：", font=("Arial", 9)).pack(anchor=tk.W, padx=5, pady=(0, 5))
+            detail_container = tk.Frame(detail_frame)
+            detail_container.pack(fill=tk.X)
+            for idx, lang in enumerate(["C", "C++", "Java", "Python", "C#"]):
+                tk.Checkbutton(detail_container, text=lang, variable=self._detail_language_vars[lang],
+                               font=("Arial", 10)).grid(row=0, column=idx, padx=5, pady=2, sticky=tk.W)
+            
+            # 6. 按钮区域（固定在底部）
             button_frame = tk.Frame(main_frame)
             button_frame.pack(fill=tk.X, padx=5, pady=5, side=tk.BOTTOM)
             
@@ -585,6 +606,9 @@ class DuckGame:
                 save_json = self._code_counting_config['save_json'].get()
                 save_xlsx = self._code_counting_config['save_xlsx'].get()
                 
+                # 详细表语言选项
+                detail_languages = {lang for lang, var in self._detail_language_vars.items() if var.get()}
+                
                 # 不关闭配置窗口，保持打开以便多次统计
                 # 显示开始统计信息
                 self._update_text_display(f"唐老鸭: 好的！开始统计代码量！\n目录: {target_dir}\n")
@@ -595,7 +619,11 @@ class DuckGame:
                 # 启动代码统计（在后台线程）
                 threading.Thread(
                     target=self.start_code_counting,
-                    args=(target_dir, selected_languages, include_blank, include_comment, include_function_stats, include_c_function_stats, save_not, save_csv, save_json, save_xlsx),
+                    args=(
+                        target_dir, selected_languages, include_blank, include_comment,
+                        include_function_stats, include_c_function_stats,
+                        save_not, save_csv, save_json, save_xlsx, detail_languages
+                    ),
                     daemon=True
                 ).start()
             
@@ -1297,7 +1325,9 @@ class DuckGame:
             # 使用线程安全的方式显示错误
             self._update_text_display(f"唐老鸭: 抱歉，AI服务出现了问题: {str(e)}\n\n")
     
-    def start_code_counting(self, target_dir=None, selected_languages=None, include_blank=True, include_comment=True, include_function_stats=True, include_c_function_stats=False, save_not=True, save_csv=False, save_json=False, save_xlsx=False):
+    def start_code_counting(self, target_dir=None, selected_languages=None, include_blank=True, include_comment=True,
+                           include_function_stats=True, include_c_function_stats=False, save_not=True, save_csv=False,
+                           save_json=False, save_xlsx=False, detail_languages=None):
         """启动代码统计（可能在后台线程中运行）
         
         Args:
@@ -1308,6 +1338,9 @@ class DuckGame:
             include_function_stats: 是否统计Python函数信息
             include_c_function_stats: 是否统计C/C++函数信息
         """
+        if detail_languages is None:
+            detail_languages = set()
+
         # 切换小鸭外观为专注主题（工作主题）- 通过UI队列确保在主线程执行
         self._ui_queue.put(("change_duckling_theme", "focused"))
         # 触发代码统计行为
@@ -1413,6 +1446,11 @@ class DuckGame:
                     report_text += f"最小长度: {c_function_stats.min_length} 行\n"
                     report_text += f"最大长度: {c_function_stats.max_length} 行\n"
             
+            detail_table = self._build_detail_table_data(
+                by_language, detail_languages, include_blank, include_comment,
+                function_stats, c_function_stats
+            )
+
             # 显示文本结果（使用线程安全的方式）
             self._update_text_display(f"唐老鸭: 代码统计完成！\n{report_text}\n")
             
@@ -1467,6 +1505,9 @@ class DuckGame:
                         'max_length': c_function_stats.max_length
                     }
                 
+                if detail_table and detail_table.get('rows'):
+                    save_data['detail_table'] = detail_table
+                
                 # 保存为 CSV
                 if save_csv:
                     try:
@@ -1517,6 +1558,13 @@ class DuckGame:
                                 writer.writerow(['中位数长度', f"{c_function_stats.median_length:.2f}"])
                                 writer.writerow(['最小长度', c_function_stats.min_length])
                                 writer.writerow(['最大长度', c_function_stats.max_length])
+
+                            if detail_table and detail_table.get('rows'):
+                                writer.writerow([])
+                                writer.writerow(['语言明细表'])
+                                writer.writerow(detail_table['columns'])
+                                for row in detail_table['rows']:
+                                    writer.writerow(row)
                         
                         saved_files.append(csv_filename)
                     except Exception as e:
@@ -1642,6 +1690,15 @@ class DuckGame:
                                 ws.cell(row=row, column=1, value='最大长度')
                                 ws.cell(row=row, column=2, value=c_function_stats.max_length)
                             
+                            if detail_table and detail_table.get('rows'):
+                                ws_detail = wb.create_sheet("语言明细")
+                                for col_idx, header in enumerate(detail_table['columns'], 1):
+                                    cell = ws_detail.cell(row=1, column=col_idx, value=header)
+                                    cell.font = Font(bold=True)
+                                for r_idx, row_values in enumerate(detail_table['rows'], start=2):
+                                    for c_idx, value in enumerate(row_values, start=1):
+                                        ws_detail.cell(row=r_idx, column=c_idx, value=value)
+                            
                             wb.save(xlsx_path)
                             saved_files.append(xlsx_filename)
                     except Exception as e:
@@ -1654,7 +1711,7 @@ class DuckGame:
             
             # 打开图形化窗口（需要在主线程中调用）
             # 主线程显示图表（通过队列）
-            self._enqueue_show_charts(result, function_stats, c_function_stats)
+            self._enqueue_show_charts(result, function_stats, c_function_stats, detail_table)
             
             # 统计完成后，恢复小鸭的原始外观 - 通过UI队列确保在主线程执行
             self._ui_queue.put(("change_duckling_theme", "original"))
@@ -1668,35 +1725,123 @@ class DuckGame:
             # 即使出错也要恢复小鸭的原始外观 - 通过UI队列确保在主线程执行
             self._ui_queue.put(("change_duckling_theme", "original"))
     
-    def show_code_statistics_charts(self, code_result, function_stats=None, c_function_stats=None):
-        """显示代码统计图表 - 整合到一个窗口中"""
+    def _build_detail_table_data(self, by_language, detail_languages, include_blank, include_comment,
+                                 function_stats, c_function_stats):
+        """根据选择的语言构建明细表数据"""
+        if not detail_languages:
+            return None
+
+        columns = ["语言", "源文件数", "代码行数", "空行数", "注释行数", "函数个数", "最大值", "最小值", "均值", "中位数"]
+
+        rows = []
+
+        def match_lang(key):
+            for existing in by_language.keys():
+                if existing.lower() == key.lower():
+                    return existing
+            return None
+
+        def extract_function_metrics(lang_name):
+            metrics = {"count": 0, "min": 0, "max": 0, "mean": 0.0, "median": 0.0, "has_data": False}
+            lower = lang_name.lower()
+            if "python" in lower and function_stats:
+                metrics["count"] = getattr(function_stats, "total_functions", 0) or 0
+                metrics["min"] = getattr(function_stats, "min_length", 0) or 0
+                metrics["max"] = getattr(function_stats, "max_length", 0) or 0
+                metrics["mean"] = round(getattr(function_stats, "mean_length", 0.0) or 0.0, 2)
+                metrics["median"] = round(getattr(function_stats, "median_length", 0.0) or 0.0, 2)
+                metrics["has_data"] = metrics["count"] > 0
+            elif lower in {"c", "c++", "c/c++"} and c_function_stats:
+                metrics["count"] = getattr(c_function_stats, "total_functions", 0) or 0
+                metrics["min"] = getattr(c_function_stats, "min_length", 0) or 0
+                metrics["max"] = getattr(c_function_stats, "max_length", 0) or 0
+                metrics["mean"] = round(getattr(c_function_stats, "mean_length", 0.0) or 0.0, 2)
+                metrics["median"] = round(getattr(c_function_stats, "median_length", 0.0) or 0.0, 2)
+                metrics["has_data"] = metrics["count"] > 0
+            else:
+                metrics["count"] = 0
+                metrics["min"] = metrics["max"] = "-"
+                metrics["mean"] = metrics["median"] = "-"
+            return metrics
+
+        for lang in sorted(detail_languages):
+            lang_key = match_lang(lang) or lang
+            stat = by_language.get(lang_key)
+            file_count = getattr(stat, "files", 0) if stat else 0
+            code_lines = getattr(stat, "code", 0) if stat else 0
+            comment_lines = getattr(stat, "comment", 0) if stat else 0
+            blank_lines = getattr(stat, "blank", 0) if stat else 0
+            comment_display = comment_lines if include_comment else "-"
+            blank_display = blank_lines if include_blank else "-"
+
+            metrics = extract_function_metrics(lang_key)
+
+            row = [
+                lang,
+                file_count,
+                code_lines,
+                blank_display,
+                comment_display,
+                metrics["count"],
+                metrics["max"],
+                metrics["min"],
+                metrics["mean"],
+                metrics["median"],
+            ]
+            rows += [row]
+
+        if not rows:
+            return None
+
+        return {
+            "title": "语言明细表",
+            "columns": columns,
+            "rows": rows,
+        }
+
+    def show_code_statistics_charts(self, code_result, function_stats=None, c_function_stats=None, detail_table=None):
+        """显示代码统计图表 - 使用 Matplotlib 自带窗口（可自由缩放）"""
         try:
             import matplotlib
-            matplotlib.use('TkAgg')  # 使用TkAgg后端
+            matplotlib.use('TkAgg')
             try:
                 matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'DejaVu Sans']
                 matplotlib.rcParams['axes.unicode_minus'] = False
             except Exception:
                 pass
-            import matplotlib.pyplot as plt
-            
-            # 创建整合的图表窗口（2x2布局）
-            self._create_integrated_chart(code_result, function_stats, c_function_stats)
-            
+            self._create_integrated_chart(code_result, function_stats, c_function_stats, detail_table)
         except ImportError:
             messagebox.showwarning("警告", "需要安装matplotlib才能显示图表:\npip install matplotlib")
         except Exception as e:
             print(f"显示图表错误: {e}")
-            messagebox.showerror("错误", f"显示图表时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
-    def _create_integrated_chart(self, code_result, function_stats=None, c_function_stats=None):
+    def _create_integrated_chart(self, code_result, function_stats=None, c_function_stats=None, detail_table=None, figure=None):
         """创建整合的代码统计图表 - 所有图表在一个窗口中（2x2布局）"""
         try:
             import matplotlib.pyplot as plt
-            
-            # 创建窗口，包含2x2的子图布局（缩小尺寸）
-            fig = plt.figure(figsize=(12, 9))
-            fig.canvas.manager.set_window_title('代码统计图表')
+            show_table = bool(detail_table and detail_table.get('rows'))
+            using_external_fig = figure is not None
+            if using_external_fig:
+                fig = figure
+            else:
+                base_size = (12, 10) if show_table else (12, 8.5)
+                fig = plt.figure(figsize=base_size)
+                fig.canvas.manager.set_window_title('代码统计图表')
+            if show_table:
+                gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.9])
+                ax1 = fig.add_subplot(gs[0, 0])
+                ax2 = fig.add_subplot(gs[0, 1])
+                ax3 = fig.add_subplot(gs[1, 0])
+                ax4 = fig.add_subplot(gs[1, 1])
+                ax_table = fig.add_subplot(gs[2, :])
+            else:
+                gs = fig.add_gridspec(2, 2)
+                ax1 = fig.add_subplot(gs[0, 0])
+                ax2 = fig.add_subplot(gs[0, 1])
+                ax3 = fig.add_subplot(gs[1, 0])
+                ax4 = fig.add_subplot(gs[1, 1])
             
             # 解析代码统计数据
             labels = []
@@ -1742,7 +1887,6 @@ class DuckGame:
                 values = [val for _, val in sorted_data]
             
             # 子图1：各语言代码行数柱状图（左上）
-            ax1 = fig.add_subplot(2, 2, 1)
             if labels:
                 ax1.bar(labels, values, color="#4C9AFF")
                 ax1.set_title("各语言代码行数（柱状图）", fontsize=10, fontweight='bold')
@@ -1755,9 +1899,9 @@ class DuckGame:
                 ax1.set_title("各语言代码行数（柱状图）", fontsize=10, fontweight='bold')
             
             # 子图2：各语言占比饼图（右上）
-            ax2 = fig.add_subplot(2, 2, 2)
             if labels:
-                ax2.pie(values, labels=labels, autopct='%1.1f%%', startangle=140, textprops={'fontsize': 8})
+                wedges, _, autotexts = ax2.pie(values, labels=None, autopct='%1.1f%%', startangle=140, textprops={'fontsize': 8})
+                ax2.legend(wedges, labels, title="语言", loc='center left', bbox_to_anchor=(1.05, 0.5), fontsize=8)
                 ax2.set_title("各语言占比（饼图）", fontsize=10, fontweight='bold')
             else:
                 ax2.text(0.5, 0.5, "没有找到代码统计数据", 
@@ -1765,77 +1909,48 @@ class DuckGame:
                 ax2.set_title("各语言占比（饼图）", fontsize=10, fontweight='bold')
             
             # 子图3：Python函数长度直方图（左下）
-            ax3 = fig.add_subplot(2, 2, 3)
             self._plot_function_stats(ax3, function_stats, "Python")
             
             # 子图4：C/C++函数长度直方图（右下）
-            ax4 = fig.add_subplot(2, 2, 4)
             self._plot_function_stats(ax4, c_function_stats, "C/C++")
             
-            # 使用 tight_layout 确保布局紧凑且不变形，调整 padding
-            plt.tight_layout(pad=2.0, h_pad=2.5, w_pad=2.5)
-
-            def _refresh_layout(event=None):
-                """在窗口大小变化时刷新布局，避免图表拉伸变形"""
-                try:
-                    fig.tight_layout(pad=2.0, h_pad=2.5, w_pad=2.5)
-                    fig.canvas.draw_idle()
-                except Exception:
-                    pass
-
-            # 监听窗口缩放事件，动态刷新布局
-            fig.canvas.mpl_connect('resize_event', _refresh_layout)
-
-            # 显示窗口（非阻塞）
-            plt.show(block=False)
+            # 如果需要显示语言明细表，在底部添加表格
+            if show_table:
+                ax_table.axis('off')
+                table = ax_table.table(cellText=detail_table['rows'],
+                                       colLabels=detail_table['columns'],
+                                       cellLoc='center', loc='center')
+                table.auto_set_font_size(False)
+                table.set_fontsize(8)
+                table.scale(1, 1.2)
+                ax_table.set_title(detail_table.get('title', "语言明细表"), fontsize=11, fontweight='bold', pad=10)
             
-            # 在显示后设置窗口属性，参考配置窗口的实现方式
-            # 只设置最小大小，允许自由缩放（不设置maxsize，不调用resizable(False, False)）
-            def configure_window():
+            def adjust_layout():
                 try:
-                    # 获取 matplotlib 窗口（TkAgg 后端）
-                    manager = fig.canvas.manager
-                    window = None
-                    
-                    # 尝试多种方式获取窗口对象
-                    if hasattr(manager, 'window'):
-                        window = manager.window
-                    elif hasattr(fig.canvas, 'tk'):
-                        window = fig.canvas.tk
-                    elif hasattr(fig.canvas, 'master'):
-                        window = fig.canvas.master
-                    
-                    if window:
-                        # 只设置最小大小，允许自由缩放（参考配置窗口的实现）
-                        # 不设置maxsize，不调用resizable(False, False)
-                        if hasattr(window, 'wm_minsize'):
-                            # 设置最小大小，但允许缩放
-                            window.wm_minsize(600, 450)  # 最小尺寸，但可以放大
-                        # 确保窗口可以缩放（默认应该是可以的，但显式设置一下）
-                        if hasattr(window, 'wm_resizable'):
-                            window.wm_resizable(True, True)  # 显式启用缩放
-                except Exception:
-                    # 如果设置失败，忽略错误
-                    pass
-            
-            # 延迟设置窗口属性，确保窗口已完全创建
-            try:
-                manager = fig.canvas.manager
-                if hasattr(manager, 'window'):
-                    window = manager.window
-                    if hasattr(window, 'after'):
-                        window.after(100, configure_window)  # 100ms 后执行
+                    if show_table:
+                        fig.subplots_adjust(top=0.93, bottom=0.08, left=0.06, right=0.92, hspace=0.55, wspace=0.3)
                     else:
-                        configure_window()
-                else:
-                    configure_window()
-            except Exception:
-                pass
+                        fig.subplots_adjust(top=0.93, bottom=0.12, left=0.08, right=0.92, hspace=0.35, wspace=0.3)
+                except Exception:
+                    pass
+
+            adjust_layout()
+
+            if not using_external_fig:
+                def _refresh_layout(event=None):
+                    adjust_layout()
+                    fig.canvas.draw_idle()
+
+                fig.canvas.mpl_connect('resize_event', _refresh_layout)
+                plt.show(block=False)
+            else:
+                return adjust_layout
             
         except Exception as e:
             print(f"创建整合图表错误: {e}")
             import traceback
             traceback.print_exc()
+            return None
     
     def _plot_function_stats(self, ax, function_stats, lang_name="Python"):
         """在指定的axes上绘制函数统计图表"""
@@ -2130,10 +2245,10 @@ class DuckGame:
         except Exception as e:
             print(f"提交文本更新到队列失败: {e}")
 
-    def _enqueue_show_charts(self, code_result, function_stats=None, c_function_stats=None):
+    def _enqueue_show_charts(self, code_result, function_stats=None, c_function_stats=None, detail_table=None):
         """将显示图表的请求放入队列，由主线程处理。"""
         try:
-            self._ui_queue.put(("show_charts", code_result, function_stats, c_function_stats), block=False)
+            self._ui_queue.put(("show_charts", code_result, function_stats, c_function_stats, detail_table), block=False)
         except Exception as e:
             print(f"提交图表显示到队列失败: {e}")
 
@@ -2175,7 +2290,8 @@ class DuckGame:
                     code_result = item[1]
                     function_stats = item[2] if len(item) > 2 else None
                     c_function_stats = item[3] if len(item) > 3 else None
-                    self.show_code_statistics_charts(code_result, function_stats, c_function_stats)
+                    detail_table = item[4] if len(item) > 4 else None
+                    self.show_code_statistics_charts(code_result, function_stats, c_function_stats, detail_table)
                 elif kind == "change_duckling_theme":
                     theme = item[1] if len(item) > 1 else "original"
                     # 在主线程中切换小鸭外观
