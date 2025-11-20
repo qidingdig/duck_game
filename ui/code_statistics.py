@@ -16,9 +16,10 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Set
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 from ui.chart_renderer import ChartRenderer
+from ui.message_dialog import MessageDialogHelper
 
 
 class CodeStatisticsUI:
@@ -42,7 +43,8 @@ class CodeStatisticsUI:
         self._update_text = update_text_callback
         self._trigger_behavior = trigger_behavior_callback
         self._default_target_dir = default_target_dir or os.getcwd()
-        self._chart_renderer = chart_renderer or ChartRenderer()
+        self._message_dialog = MessageDialogHelper(tk_root=tk_root)
+        self._chart_renderer = chart_renderer or ChartRenderer(message_dialog=self._message_dialog)
 
         # 运行时变量
         self._config_window = None
@@ -293,7 +295,7 @@ class CodeStatisticsUI:
             def start_counting():
                 target_dir = self._target_dir_var.get().strip() if self._target_dir_var else ""
                 if not target_dir or not os.path.exists(target_dir):
-                    messagebox.showerror("错误", "请选择有效的目录路径！")
+                    self._message_dialog.show_error("请选择有效的目录路径！", "错误")
                     return
 
                 selected_languages = {lang for lang, var in self._language_vars.items() if var.get()}
@@ -354,7 +356,14 @@ class CodeStatisticsUI:
             import traceback
 
             traceback.print_exc()
-            messagebox.showerror("错误", f"创建配置对话框失败: {exc}")
+            self._message_dialog.show_error(f"创建配置对话框失败: {exc}", "错误")
+
+    def has_active_window(self) -> bool:
+        """判断配置窗口是否存在且可见。"""
+        try:
+            return bool(self._config_window and self._config_window.winfo_exists())
+        except Exception:
+            return False
 
     # --------------------------------------------------------------- BACKEND --
     def start_code_counting(

@@ -8,13 +8,10 @@
 import sys
 import os
 import pygame
-import tkinter as tk
-from tkinter import messagebox
 import threading
 import time
 import warnings
-from typing import Optional
-from openai import OpenAI
+from typing import Dict, Optional
 from queue import Queue
 import re
 
@@ -26,9 +23,15 @@ sys.path.insert(0, current_dir)
 
 from utils.config import Config
 from services.advanced_code_counter import AdvancedCodeCounter
+from services.ai_service import AIService
+from ui.chat_dialog import ChatDialogManager
 from ui.code_statistics import CodeStatisticsUI
+from ui.tk_root_manager import TkRootManager
+from ui.queue_processor import UIQueueProcessor
+from ui.message_dialog import MessageDialogHelper
 from services.duck_behavior_manager import DuckBehaviorManager
 from game.characters import Duckling
+from game.command_processor import CommandProcessor
 from core.game_state import GameState, GameStateManager
 from core.event_system import EventManager
 from game.minigames.red_packet_game import RedPacketGameManager
@@ -69,62 +72,56 @@ class DuckGame:
             self.ducklings.append(duckling)
         
         self.red_packet_game = None
-        
-        # 对话框相关
-        self.dialog_active = False
+        self._ui_queue = Queue()  # 线程安全UI消息队列
         
         # 红包游戏状态
         self.red_packet_game_active = False
         
-        # 汤小鸭移动状态
+        # 唐小鸭移动状态
         self.duckling_positions_original = self.duckling_positions.copy()
         
-        # 初始化OpenAI客户端
-        self.openai_client = OpenAI(
-            api_key="ollama",
-            base_url="http://localhost:11434/v1"
+        # 初始化AI服务
+        self.ai_service = AIService(
+            backend="openai",
+            ollama_url="http://localhost:11434",
+            model="deepseek-r1:8b",
+            system_prompt="你是唐老鸭，一个友善的卡通角色。请用中文回答用户的问题，保持幽默和友好的语调。"
         )
         
         # 初始化增强代码统计工具
         self.code_counter = AdvancedCodeCounter()
         # 初始化行为管理器
         self.behavior_manager = DuckBehaviorManager(self._update_text_display)
+        # 初始化命令处理器
+        self.command_processor = CommandProcessor()
+        self._setup_commands()
         # 初始化红包游戏管理器
         self._init_red_packet_game_manager()
         
-        # 初始化tkinter相关
-        self._root = None
-        self._need_dialog = False
-        self._dialog_lock = threading.Lock()  # 用于保护对话框创建
-        self._tk_running = False  # tkinter主循环是否在运行
-        self._update_counter = 0  # 用于控制update()的调用频率
-        self._ui_queue = Queue()  # 线程安全UI消息队列
-        self._dialog_saved_geometry = None  # 保存的对话框geometry，用于恢复
-        self._chart_window_created_time = None  # 图表窗口创建时间，用于临时保护
-        self._tk_update_counter = 0  # 用于控制Tkinter更新频率
-        self._need_set_focus = False  # 标记是否需要设置输入框焦点
+        # 初始化UI基础设施
+        self._tk_root_manager = TkRootManager(update_interval=5)
+        self._ui_queue_processor = UIQueueProcessor()
+        self._message_dialog = MessageDialogHelper()
         self._need_config_dialog = False  # 标记是否需要创建配置对话框
-        self._last_window_pos = {}  # 记录窗口位置，用于检测拖动
-        self._is_dragging = False  # 标记是否正在拖动窗口
-        self._update_call_count = 0  # 计数器，限制update()调用频率
-        self._drag_start_time = 0  # 拖动开始时间
-        self._last_drag_check_time = 0  # 上次拖动检查时间
         self.code_stats_ui: Optional[CodeStatisticsUI] = None
+        self.chat_ui: Optional[ChatDialogManager] = None
         
         # 在主线程中初始化Tkinter root窗口（必须在主线程中创建）
-        try:
-            self._root = tk.Tk()
-            self._root.withdraw()  # 隐藏根窗口
-            self._root.protocol("WM_DELETE_WINDOW", lambda: None)  # 防止关闭根窗口
-            # 启动after()事件处理循环，让Tkinter自己处理事件，避免在主循环中调用update()
-            self._tk_event_loop_running = False
-            self._start_tk_event_loop()
-        except Exception as e:
-            print(f"初始化Tkinter root时出错: {e}")
-            self._root = None
-        else:
+        if self._tk_root_manager.initialize():
+            tk_root = self._tk_root_manager.get_root()
+            self._message_dialog = MessageDialogHelper(tk_root=tk_root)
+            
+            # 注册UI队列消息处理器
+            self._setup_ui_queue_handlers()
+            
+            # 初始化UI组件
+            self.chat_ui = ChatDialogManager(
+                tk_root=tk_root,
+                ui_queue=self._ui_queue,
+                on_command=self.handle_user_command,
+            )
             self.code_stats_ui = CodeStatisticsUI(
-                tk_root=self._root,
+                tk_root=tk_root,
                 code_counter=self.code_counter,
                 ui_queue=self._ui_queue,
                 update_text_callback=self._update_text_display,
@@ -149,13 +146,48 @@ class DuckGame:
         print("- 我要统计代码量")
         print("========================")
     
-    def _start_tk_event_loop(self):
-        """启动Tkinter的after()事件循环（现在事件处理在主循环中完成，这里只标记）"""
-        if not hasattr(self, '_root') or self._root is None:
-            return
+    def _setup_ui_queue_handlers(self):
+        """注册UI队列消息处理器。"""
+        # append_text 消息处理
+        def handle_append_text(item):
+            text = item[1] if len(item) > 1 else ""
+            if self.chat_ui:
+                self.chat_ui.insert_text(text)
+            else:
+                print(text, end="" if text.endswith("\n") else "\n")
         
-        # 标记事件循环已启动（虽然实际处理在主循环中）
-        self._tk_event_loop_running = True
+        # show_charts 消息处理
+        def handle_show_charts(item):
+            code_result = item[1] if len(item) > 1 else None
+            function_stats = item[2] if len(item) > 2 else None
+            c_function_stats = item[3] if len(item) > 3 else None
+            detail_table = item[4] if len(item) > 4 else None
+            if self.code_stats_ui:
+                self.code_stats_ui.show_charts(code_result, function_stats, c_function_stats, detail_table)
+        
+        # change_duckling_theme 消息处理
+        def handle_change_theme(item):
+            theme = item[1] if len(item) > 1 else "original"
+            if hasattr(self, 'ducklings') and self.ducklings:
+                for duckling in self.ducklings:
+                    if theme == "excited":
+                        duckling.switch_to_excited_theme()
+                    elif theme == "focused":
+                        duckling.switch_to_focused_theme()
+                    elif theme == "original":
+                        duckling.restore_original_appearance()
+        
+        # duck_behavior 消息处理
+        def handle_duck_behavior(item):
+            event_name = item[1] if len(item) > 1 else ""
+            if hasattr(self, 'behavior_manager'):
+                self.behavior_manager.trigger(event_name, getattr(self, 'ducklings', []))
+        
+        # 注册所有处理器
+        self._ui_queue_processor.register_handler("append_text", handle_append_text)
+        self._ui_queue_processor.register_handler("show_charts", handle_show_charts)
+        self._ui_queue_processor.register_handler("change_duckling_theme", handle_change_theme)
+        self._ui_queue_processor.register_handler("duck_behavior", handle_duck_behavior)
     
     def _init_red_packet_game_manager(self):
         """初始化红包游戏管理器"""
@@ -208,360 +240,95 @@ class DuckGame:
     
     def show_dialog(self):
         """显示对话框"""
-        # 如果对话框已经打开，直接返回
-        if self.dialog_active:
-            try:
-                if hasattr(self, 'dialog_window') and self.dialog_window:
-                    if self.dialog_window.winfo_exists():
-                        # 窗口已存在，将其置前
-                        self.dialog_window.lift()
-            except:
-                pass
-        
-        # 标记需要创建对话框（在主循环中创建，确保在主线程）
-        self._need_dialog = True
-        print("已标记需要创建对话框")  # 调试信息
-    
-    def _show_code_counting_dialog(self):
-        """打开代码统计配置对话框（委托给 UI 模块）"""
-        if self.code_stats_ui:
-            self.code_stats_ui.show_config_dialog()
+        if self.chat_ui:
+            self.chat_ui.request_dialog()
         else:
-            messagebox.showerror("错误", "Tk 窗口尚未初始化，无法打开配置界面。")
+            print("Tk 对话框不可用。")
     
-    def _check_and_create_dialog(self):
-        """在主循环中调用，检查并创建对话框（非阻塞）"""
-        if not self._need_dialog:
-            return
+    def _setup_commands(self):
+        """注册所有命令处理器。"""
+        context = {"game": self}
         
-        if self.dialog_active:
-            self._need_dialog = False
-            return
+        # 注册"我要抢红包"命令
+        def handle_red_packet(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            game._update_text_display("唐老鸭: 好的！让我来发红包！\n\n")
+            threading.Thread(target=game.start_red_packet_game, daemon=True).start()
         
-        self._need_dialog = False
+        self.command_processor.register(
+            name="red_packet",
+            patterns=["我要抢红包"],
+            handler=handle_red_packet,
+            description="启动红包游戏"
+        )
         
-        # 确保有Tk根窗口
-        if not hasattr(self, '_root') or self._root is None:
-            print("错误: Tkinter root窗口未初始化")
-            self.dialog_active = False
-            return
+        # 注册"我要ai问答"命令
+        def handle_ai_chat(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            game._update_text_display("唐老鸭: 好的！让我来回答你的问题！\n\n")
+            threading.Thread(target=game.start_ai_chat, args=(user_input,), daemon=True).start()
         
-        # 直接创建对话框，不使用after延迟（避免事件循环问题）
-        try:
-            print("开始创建对话框窗口...")
-            
-            # 创建对话框窗口 - 确保可以拖动
-            dialog_window = tk.Toplevel(self._root)
-            dialog_window.title("与唐老鸭对话")
-            dialog_window.geometry("600x500")
-            dialog_window.minsize(400, 300)  # 设置最小大小，但允许拖动和缩放
-            # 允许窗口拖动和缩放，通过智能事件处理避免GIL问题
-            # 确保窗口可以拖动（Toplevel默认就可以拖动，不需要特殊设置）
-            dialog_window.deiconify()
-            # 确保窗口可以接收焦点和事件
-            dialog_window.focus_set()
-            
-            # 确保after()事件循环正在运行
-            if not hasattr(self, '_tk_event_loop_running') or not self._tk_event_loop_running:
-                self._start_tk_event_loop()
-            
-            # 立即更新窗口，确保显示
-            dialog_window.update_idletasks()
-            
-            # 创建输入框 - 确保可以正常输入中文
-            input_frame = tk.Frame(dialog_window)
-            input_frame.pack(pady=10, padx=10, fill=tk.X)
-            tk.Label(input_frame, text="输入消息:", font=("Arial", 12)).pack(anchor=tk.W)
-            self.input_entry = tk.Entry(input_frame, font=("Arial", 12), width=50)
-            self.input_entry.pack(pady=5, fill=tk.X)
-            # 绑定回车键事件
-            self.input_entry.bind('<Return>', lambda e: self.process_input(dialog_window))
-            # 确保输入框默认状态是可编辑的（Entry默认就是NORMAL，但显式设置更安全）
-            self.input_entry.config(state=tk.NORMAL)
-            # 不立即设置焦点，避免影响中文输入法
-            # 延迟设置焦点，确保窗口完全显示后再设置
-            self._need_set_focus = True
-            
-            # 创建显示区域
-            display_frame = tk.Frame(dialog_window)
-            display_frame.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
-            tk.Label(display_frame, text="对话记录:", font=("Arial", 12)).pack(anchor=tk.W)
-            scrollbar = tk.Scrollbar(display_frame)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.text_display = tk.Text(display_frame, height=15, width=60, font=("Arial", 10), yscrollcommand=scrollbar.set, state=tk.DISABLED)
-            self.text_display.pack(pady=5, fill=tk.BOTH, expand=True)
-            scrollbar.config(command=self.text_display.yview)
-            
-            # 创建按钮
-            button_frame = tk.Frame(dialog_window)
-            button_frame.pack(pady=10)
-            tk.Button(button_frame, text="发送", command=lambda: self.process_input(dialog_window), font=("Arial", 12), width=10).pack(side=tk.LEFT, padx=5)
-            tk.Button(button_frame, text="关闭", command=lambda: self.close_dialog(dialog_window), font=("Arial", 12), width=10).pack(side=tk.LEFT, padx=5)
-            
-            # 保存对话框窗口引用
-            self.dialog_window = dialog_window
-            self.dialog_active = True
-            
-            # 添加欢迎消息（使用线程安全的方式，确保在主循环中执行）
-            welcome_msg = "唐老鸭: 你好！我是唐老鸭，有什么可以帮助你的吗？\n\n"
-            welcome_msg += "提示：\n"
-            welcome_msg += "- 输入'我要抢红包'可以开始红包游戏\n"
-            welcome_msg += "- 输入'我要ai问答'可以开始AI对话\n"
-            welcome_msg += "- 输入'我要统计代码量'会弹出配置界面，可以选择目录、语言和统计选项\n"
-            welcome_msg += "- 输入'统计代码: <目录路径>'可以快速统计指定目录的代码（使用默认设置）\n\n"
-            # 使用线程安全的方式插入欢迎消息
-            self._update_text_display(welcome_msg)
-            # 设置关闭事件处理，确保可以点击×关闭
-            def on_close():
-                self.close_dialog(dialog_window)
-            dialog_window.protocol("WM_DELETE_WINDOW", on_close)
-            
-            # 立即更新窗口，确保内容显示
-            dialog_window.update_idletasks()
-            # 立即调用一次update()，确保窗口和输入框可以接收事件
-            try:
-                dialog_window.update()
-            except:
-                pass
-            
-            # 确保窗口获得焦点
-            dialog_window.focus_set()
-            # 不立即设置输入框焦点，避免影响中文输入法
-            # 标记需要设置焦点，将在主循环中延迟设置
-            self._need_set_focus = True
-            
-            print(f"对话框已创建: {self.dialog_active}, 状态: {self.dialog_window.winfo_exists() if hasattr(self, 'dialog_window') else False}, 可见: {1 if hasattr(self, 'dialog_window') and self.dialog_window.winfo_viewable() else 0}")
-            
-        except Exception as e:
-            print(f"创建对话框时出错: {e}")
-            import traceback
-            traceback.print_exc()
-            self.dialog_active = False
-    
-    
-    def close_dialog(self, dialog_window=None):
-        """关闭对话框（非阻塞）"""
-        if dialog_window is None:
-            dialog_window = getattr(self, 'dialog_window', None)
+        self.command_processor.register(
+            name="ai_chat",
+            patterns=["我要ai问答", "^我要ai问答"],
+            handler=handle_ai_chat,
+            description="开始AI对话"
+        )
         
-        print("[DEBUG] close_dialog被调用")
-        try:
-            if dialog_window:
-                # 检查窗口是否还存在
-                try:
-                    if dialog_window.winfo_exists():
-                        print("[DEBUG] 正在销毁窗口")
-                        # 直接销毁窗口（不调用grab_release，避免阻塞）
-                        dialog_window.destroy()
-                        print("[DEBUG] 窗口已销毁")
-                except (tk.TclError, AttributeError) as e:
-                    # 窗口已经不存在
-                    print(f"[DEBUG] 窗口已不存在: {e}")
-                    pass
-        except Exception as e:
-            print(f"关闭对话框错误: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            # 重置状态
-            self.dialog_active = False
-            self.dialog_window = None
-            self.input_entry = None
-            self.text_display = None
-            self._need_set_focus = False  # 重置焦点设置标志
-            print("对话框已关闭")  # 调试信息
-    
-    def _restore_dialog_geometry(self, geometry):
-        """恢复对话框窗口的geometry"""
-        try:
-            if hasattr(self, 'dialog_window') and self.dialog_window:
-                if self.dialog_window.winfo_exists():
-                    current_geometry = self.dialog_window.geometry()
-                    current_width = self.dialog_window.winfo_width()
-                    current_height = self.dialog_window.winfo_height()
-                    
-                    # 解析geometry获取期望的大小
-                    import re
-                    geo_match = re.match(r'(\d+)x(\d+)\+(\d+)\+(\d+)', geometry)
-                    if geo_match:
-                        saved_width = int(geo_match.group(1))
-                        saved_height = int(geo_match.group(2))
-                        saved_x = int(geo_match.group(3))
-                        saved_y = int(geo_match.group(4))
-                        
-                        # 检查实际大小是否改变
-                        if current_width != saved_width or current_height != saved_height:
-                            print(f"[DEBUG] _restore_dialog_geometry: 恢复geometry")
-                            print(f"[DEBUG] 当前实际大小: {current_width}x{current_height}, 目标: {saved_width}x{saved_height}")
-                            # 锁定并恢复（不使用update()避免线程问题）
-                            self.dialog_window.minsize(saved_width, saved_height)
-                            self.dialog_window.maxsize(saved_width, saved_height)
-                            self.dialog_window.resizable(False, False)
-                            self.dialog_window.geometry(geometry)
-                            self.dialog_window.update_idletasks()
-                        elif current_geometry != geometry:
-                            # geometry字符串不匹配但实际大小匹配，也需要恢复
-                            self.dialog_window.geometry(geometry)
-                            self.dialog_window.update_idletasks()
-                    elif current_geometry != geometry:
-                        # 如果解析失败，使用geometry字符串比较
-                        print(f"[DEBUG] _restore_dialog_geometry: 恢复geometry")
-                        print(f"[DEBUG] 当前: {current_geometry}, 目标: {geometry}")
-                        self.dialog_window.geometry(geometry)
-                        self.dialog_window.update_idletasks()
-        except Exception as e:
-            print(f"[DEBUG] _restore_dialog_geometry异常: {e}")
-    
-    def _set_input_focus(self):
-        """设置输入框焦点（在主循环中调用，确保窗口完全显示，只设置一次）"""
-        try:
-            if hasattr(self, 'input_entry') and self.input_entry:
-                if hasattr(self, 'dialog_window') and self.dialog_window:
-                    if self.dialog_window.winfo_exists():
-                        # 检查输入框是否已经有焦点，避免频繁设置
-                        try:
-                            focused_widget = self.dialog_window.focus_get()
-                            if focused_widget == self.input_entry:
-                                # 已经有焦点，不需要重复设置
-                                self._need_set_focus = False
-                                return
-                        except:
-                            pass
-                        
-                        # 确保窗口获得焦点
-                        self.dialog_window.focus_set()
-                        # 确保输入框可以使用（Entry默认就是NORMAL，但显式设置更安全）
-                        self.input_entry.config(state=tk.NORMAL)
-                        # 确保输入框获得焦点（只设置一次，避免影响中文输入法）
-                        self.input_entry.focus_set()
-                        # 只使用update_idletasks()，避免在主循环中调用update()
-                        self.dialog_window.update_idletasks()
-                        # 标记焦点已设置
-                        self._need_set_focus = False
-                        print("[DEBUG] 输入框焦点已设置")
-        except Exception as e:
-            print(f"[DEBUG] 设置输入框焦点失败: {e}")
-            import traceback
-            traceback.print_exc()
-            self._need_set_focus = False
-    
-    def _safe_insert_text(self, text):
-        """安全地插入文本到text_display（处理DISABLED状态）- 线程安全版本"""
-        # 这个方法会被队列处理器调用，此时已经在主线程中，可以直接操作Tkinter组件
-        try:
-            if hasattr(self, 'text_display') and self.text_display:
-                # 检查组件是否还存在且有效
-                try:
-                    if self.text_display.winfo_exists():
-                        self.text_display.config(state=tk.NORMAL)
-                        self.text_display.insert(tk.END, text)
-                        self.text_display.see(tk.END)
-                        self.text_display.config(state=tk.DISABLED)
-                        # 立即更新显示（只使用update_idletasks，不使用update）
-                        if hasattr(self, 'dialog_window') and self.dialog_window:
-                            try:
-                                if self.dialog_window.winfo_exists():
-                                    self.dialog_window.update_idletasks()
-                            except:
-                                pass
-                except tk.TclError as e:
-                    # 组件已销毁或不在主循环中，忽略错误
-                    # 如果还不在主循环中，将文本重新放入队列延迟处理
-                    if "main thread is not in main loop" in str(e).lower() or "main loop" in str(e).lower():
-                        print(f"[DEBUG] 不在主循环中，重新放入队列: {e}")
-                        # 重新放入队列，稍后处理
-                        try:
-                            self._ui_queue.put(("append_text", text), block=False)
-                        except:
-                            pass
-                    pass
-        except RuntimeError as e:
-            # 如果是不在主循环中的错误，重新放入队列
-            if "main thread is not in main loop" in str(e).lower() or "main loop" in str(e).lower():
-                print(f"[DEBUG] 不在主循环中，重新放入队列: {e}")
-                try:
-                    self._ui_queue.put(("append_text", text), block=False)
-                except:
-                    pass
-            else:
-                print(f"[DEBUG] 插入文本失败: {e}")
-                import traceback
-                traceback.print_exc()
-        except Exception as e:
-            print(f"[DEBUG] 插入文本失败: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def _safe_insert_text_thread_safe(self, text):
-        """线程安全版本：将文本插入请求放入队列"""
-        # 始终使用线程安全的队列机制，确保可以在任何线程中调用
-        self._update_text_display(text)
-    
-    def process_input(self, dialog_window, event=None):
-        """处理用户输入"""
-        if not hasattr(self, 'input_entry') or self.input_entry is None:
-            print("[DEBUG] process_input: input_entry不存在")
-            return
+        # 注册"我要统计代码量"命令
+        def handle_code_stat_config(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            game._need_config_dialog = True
         
-        try:
-            user_input = self.input_entry.get().strip()
-            print(f"[DEBUG] process_input: 用户输入 = '{user_input}'")
-            
-            if not user_input:
+        self.command_processor.register(
+            name="code_stat_config",
+            patterns=["我要统计代码量"],
+            handler=handle_code_stat_config,
+            description="打开代码统计配置界面"
+        )
+        
+        # 注册"统计代码: <路径>"命令
+        def handle_code_stat_quick(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            m = re.match(r'^\s*统计代码[：:]\s*(.+)\s*$', user_input)
+            if not m:
+                game._update_text_display("唐老鸭: 请提供要统计的目录路径，格式：统计代码: <目录路径>\n\n")
                 return
-            
-            # 显示用户输入（使用线程安全的方式，确保在主循环中执行）
-            self._update_text_display(f"你: {user_input}\n")
-            
-            # 清空输入框（在获取输入后）
-            self.input_entry.delete(0, tk.END)
-            
-            # 确保输入框重新获得焦点，以便继续输入
-            self.input_entry.focus_set()
-            
-            # 处理特殊命令
-            if "我要抢红包" in user_input:
-                self._update_text_display("唐老鸭: 好的！让我来发红包！\n\n")
-                # 启动红包游戏
-                threading.Thread(target=self.start_red_packet_game, daemon=True).start()
-            
-            elif "我要ai问答" in user_input or user_input.startswith("我要ai问答"):
-                self._update_text_display("唐老鸭: 好的！让我来回答你的问题！\n\n")
-                # 启动AI问答
-                threading.Thread(target=self.start_ai_chat, args=(user_input,), daemon=True).start()
-            
-            elif "我要统计代码量" in user_input:
-                # 标记需要创建配置对话框（在主循环中创建，避免GIL问题）
-                self._need_config_dialog = True
-            
-            elif user_input.startswith("统计代码:") or user_input.startswith("统计代码："):
-                # 解析目录路径（支持 Windows 盘符冒号）
-                m = re.match(r'^\s*统计代码[：:]\s*(.+)\s*$', user_input)
-                if not m:
-                    self._update_text_display("唐老鸭: 请提供要统计的目录路径，格式：统计代码: <目录路径>\n\n")
-                    return
-                path_part = m.group(1)
-                # 展开引号
-                if (path_part.startswith('"') and path_part.endswith('"')) or (path_part.startswith("'") and path_part.endswith("'")):
-                    path_part = path_part[1:-1]
-                # 规范化路径（允许包含空格）
-                path_part = path_part.strip()
-                # 验证路径
-                if not os.path.exists(path_part):
-                    self._update_text_display(f"唐老鸭: 路径不存在: {path_part}\n请检查路径是否正确。\n\n")
-                    return
-                self._update_text_display(f"唐老鸭: 好的！让我来统计这个目录的代码量！\n目录: {path_part}\n\n")
-                # 启动代码统计
-                threading.Thread(target=self.start_code_counting, args=(path_part,), daemon=True).start()
-            
-            else:
-                # 普通AI对话
-                threading.Thread(target=self.get_ai_response, args=(user_input,), daemon=True).start()
-                
-        except Exception as e:
-            print(f"[DEBUG] process_input错误: {e}")
-            import traceback
-            traceback.print_exc()
+            path_part = m.group(1)
+            if (path_part.startswith('"') and path_part.endswith('"')) or (path_part.startswith("'") and path_part.endswith("'")):
+                path_part = path_part[1:-1]
+            path_part = path_part.strip()
+            if not os.path.exists(path_part):
+                game._update_text_display(f"唐老鸭: 路径不存在: {path_part}\n请检查路径是否正确。\n\n")
+                return
+            game._update_text_display(f"唐老鸭: 好的！让我来统计这个目录的代码量！\n目录: {path_part}\n\n")
+            threading.Thread(target=game.start_code_counting, args=(path_part,), daemon=True).start()
+        
+        self.command_processor.register(
+            name="code_stat_quick",
+            patterns=[r'^统计代码[：:]\s*.+'],
+            handler=handle_code_stat_quick,
+            description="快速统计指定目录的代码量"
+        )
+        
+        # 设置默认处理器（普通AI对话）
+        def handle_default_ai(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            threading.Thread(target=game.get_ai_response, args=(user_input,), daemon=True).start()
+        
+        self.command_processor.set_default_handler(handle_default_ai)
+    
+    def handle_user_command(self, user_input: str) -> None:
+        """处理来自对话框的用户命令（与具体 UI 解耦）。"""
+        user_input = user_input.strip()
+        if not user_input:
+            return
+        
+        print(f"[DEBUG] handle_user_command: 用户输入 = '{user_input}'")
+        
+        # 使用命令处理器处理
+        context = {"game": self}
+        self.command_processor.process(user_input, context)
     
     def start_red_packet_game(self):
         """启动红包游戏"""
@@ -608,7 +375,7 @@ class DuckGame:
         # 恢复小鸭的原始外观 - 通过UI队列确保在主线程执行
         self._ui_queue.put(("change_duckling_theme", "original"))
         
-        # 同步位置
+        # 同步位
         self._sync_ducklings_from_positions()
     
     
@@ -620,21 +387,13 @@ class DuckGame:
             # 显示正在思考（使用线程安全的方式）
             self._update_text_display("唐老鸭: 让我想想...\n")
             
-            # 使用OpenAI客户端
-            response = self.openai_client.chat.completions.create(
-                model="deepseek-r1:8b",
-                messages=[
-                    {"role": "system", "content": "你是唐老鸭，一个友善的卡通角色。请用中文回答用户的问题，保持幽默和友好的语调。"},
-                    {"role": "user", "content": user_input}
-                ],
+            # 使用AI服务
+            ai_response = self.ai_service.chat_completions(
+                user_input=user_input,
                 temperature=0.7,
                 max_tokens=500,
                 timeout=30
             )
-            
-            ai_response = response.choices[0].message.content
-            if not ai_response.strip():
-                ai_response = "抱歉，我没有理解你的问题，请重新提问。"
             
             # 使用线程安全的方式显示结果
             self._update_text_display(f"唐老鸭: {ai_response}\n\n")
@@ -657,7 +416,7 @@ class DuckGame:
         if self.code_stats_ui:
             self.code_stats_ui.show_charts(code_result, function_stats, c_function_stats, detail_table)
         else:
-            messagebox.showwarning("警告", "图表渲染组件未初始化。")
+            self._message_dialog.show_warning("图表渲染组件未初始化。", "警告")
 
     def _create_code_stat_chart(self, code_result):
         """已废弃的遗留接口，保留占位。"""
@@ -799,57 +558,7 @@ class DuckGame:
 
     def _process_ui_queue(self, limit_per_frame: int = 20):
         """在主线程中调用：消费UI队列并执行对应Tk操作。"""
-        processed = 0
-        while not self._ui_queue.empty() and processed < limit_per_frame:
-            try:
-                item = self._ui_queue.get_nowait()
-            except Exception:
-                break
-            processed += 1
-            if not item:
-                continue
-            kind = item[0]
-            try:
-                if kind == "append_text":
-                    text = item[1]
-                    # 确保在Tkinter事件循环中执行
-                    if hasattr(self, '_root') and self._root:
-                        # 先更新idle任务，确保事件循环处于活动状态
-                        try:
-                            self._root.update_idletasks()
-                            # 现在可以安全地调用_safe_insert_text
-                            self._safe_insert_text(text)
-                        except Exception as e:
-                            print(f"[DEBUG] 处理文本更新时出错: {e}")
-                            # 如果出错，尝试延迟处理
-                            import traceback
-                            traceback.print_exc()
-                elif kind == "show_charts":
-                    code_result = item[1]
-                    function_stats = item[2] if len(item) > 2 else None
-                    c_function_stats = item[3] if len(item) > 3 else None
-                    detail_table = item[4] if len(item) > 4 else None
-                    if self.code_stats_ui:
-                        self.code_stats_ui.show_charts(code_result, function_stats, c_function_stats, detail_table)
-                elif kind == "change_duckling_theme":
-                    theme = item[1] if len(item) > 1 else "original"
-                    # 在主线程中切换小鸭外观
-                    if hasattr(self, 'ducklings') and self.ducklings:
-                        for duckling in self.ducklings:
-                            if theme == "excited":
-                                duckling.switch_to_excited_theme()
-                            elif theme == "focused":
-                                duckling.switch_to_focused_theme()
-                            elif theme == "original":
-                                duckling.restore_original_appearance()
-                elif kind == "duck_behavior":
-                    event_name = item[1]
-                    if hasattr(self, 'behavior_manager'):
-                        self.behavior_manager.trigger(event_name, getattr(self, 'ducklings', []))
-            except Exception as e:
-                print(f"处理UI队列项出错: {e}")
-                import traceback
-                traceback.print_exc()
+        self._ui_queue_processor.process_queue(self._ui_queue, limit_per_frame)
     
     def get_ai_response(self, user_input):
         """获取AI响应（在后台线程中运行）"""
@@ -857,21 +566,13 @@ class DuckGame:
             # 显示正在思考（使用线程安全的方式）
             self._update_text_display("唐老鸭: 让我想想...\n")
             
-            # 使用OpenAI客户端
-            response = self.openai_client.chat.completions.create(
-                model="deepseek-r1:8b",
-                messages=[
-                    {"role": "system", "content": "你是唐老鸭，一个友善的卡通角色。请用中文回答用户的问题，保持幽默和友好的语调。"},
-                    {"role": "user", "content": user_input}
-                ],
+            # 使用AI服务
+            ai_response = self.ai_service.chat_completions(
+                user_input=user_input,
                 temperature=0.7,
                 max_tokens=500,
                 timeout=30
             )
-            
-            ai_response = response.choices[0].message.content
-            if not ai_response.strip():
-                ai_response = "抱歉，我没有理解你的问题，请重新提问。"
             
             # 使用线程安全的方式更新UI
             self._update_text_display(f"唐老鸭: {ai_response}\n\n")
@@ -983,42 +684,16 @@ class DuckGame:
             self.render()
             
             # 定期更新Tkinter，确保输入和关闭事件能够被处理
-            # 直接在主循环中调用update()，但使用较低的频率和异常处理
-            if hasattr(self, '_root') and self._root and (self.dialog_active or hasattr(self, '_config_window')):
-                try:
-                    # 更新计数器
-                    if hasattr(self, '_tk_update_counter'):
-                        self._tk_update_counter += 1
-                    else:
-                        self._tk_update_counter = 0
-                    
-                    # 每帧都调用update_idletasks()，确保UI更新
-                    self._root.update_idletasks()
-                    
-                    # 每5帧（约83ms）调用一次update()，处理键盘和关闭事件
-                    # 这是关键：必须调用update()才能处理键盘和关闭事件
-                    # 频率适中，既能处理事件，又不会影响中文输入法的提示词框
-                    if self._tk_update_counter % 5 == 0:
-                        try:
-                            # 直接调用update()处理事件
-                            # 适中的频率，确保输入法提示词框正常显示
-                            self._root.update()
-                        except (tk.TclError, RuntimeError, Exception):
-                            # 忽略所有错误，确保程序继续运行
-                            pass
-                    
-                    # 处理UI队列中的更新请求
-                    try:
-                        self._process_ui_queue()
-                    except Exception:
-                        pass
-                    
-                    # 如果需要设置输入框焦点，在主循环中设置（延迟几帧确保窗口完全显示）
-                    if hasattr(self, '_need_set_focus') and self._need_set_focus:
-                        if self._tk_update_counter > 10:  # 延迟约10帧（约167ms）再设置焦点
-                            self._set_input_focus()
-                except Exception:
-                    pass
+            dialog_active = self.chat_ui.is_active() if self.chat_ui else False
+            config_active = self.code_stats_ui.has_active_window() if self.code_stats_ui else False
+            has_active_windows = dialog_active or config_active
+            self._tk_root_manager.update_loop(has_active_windows)
+
+            # 无论Tk窗口是否存在，都处理一次UI队列
+            try:
+                self._process_ui_queue()
+            except Exception:
+                pass
             
             # 控制帧率
             clock.tick(60)
@@ -1031,6 +706,11 @@ class DuckGame:
                     self.behavior_manager.speech_engine.shutdown()
             except Exception:
                 pass
+        
+        # 关闭Tk根窗口
+        if hasattr(self, '_tk_root_manager'):
+            self._tk_root_manager.shutdown()
+        
         pygame.quit()
     
     def update(self):
@@ -1054,14 +734,18 @@ class DuckGame:
                 if elapsed >= self.game_duration:
                     self.end_red_packet_game()
         
-        # 检查并创建对话框（如果需要）
-        self._check_and_create_dialog()
+        # 更新对话框UI状态
+        if self.chat_ui:
+            self.chat_ui.update()
         
         # 检查并创建配置对话框（如果需要）
         if hasattr(self, '_need_config_dialog') and self._need_config_dialog:
             self._need_config_dialog = False
             try:
-                self._show_code_counting_dialog()
+                if self.code_stats_ui:
+                    self.code_stats_ui.show_config_dialog()
+                else:
+                    self._message_dialog.show_error("Tk 窗口尚未初始化，无法打开配置界面。", "错误")
             except Exception as e:
                 print(f"创建配置对话框时出错: {e}")
                 import traceback

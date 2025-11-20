@@ -169,7 +169,7 @@ class RedPacketManager:
     
     def spawn_red_packet(self):
         """生成新红包"""
-        # 从屏幕边缘随机位置生成
+        # 从随机位置生成
         side = random.randint(0, 3)
         if side == 0:  # 上边
             x = random.randint(0, self.screen_width)

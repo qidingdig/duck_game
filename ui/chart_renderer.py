@@ -8,14 +8,16 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from tkinter import messagebox
+
+from ui.message_dialog import MessageDialogHelper
 
 
 class ChartRenderer:
     """封装 Matplotlib 图表绘制逻辑"""
 
-    def __init__(self):
+    def __init__(self, message_dialog: Optional[MessageDialogHelper] = None):
         self._fonts_configured = False
+        self._message_dialog = message_dialog or MessageDialogHelper()
 
     def _ensure_matplotlib_backend(self):
         import matplotlib
@@ -41,12 +43,12 @@ class ChartRenderer:
         c_function_stats: Optional[Any] = None,
         detail_table: Optional[Dict[str, Any]] = None,
     ):
-        """显示代码统计图表 - 使用 Matplotlib 自带窗口（可自由缩放）"""
+        """显示代码统计图表 - 使用 Matplotlib 自带窗口"""
         try:
             self._ensure_matplotlib_backend()
             self._create_integrated_chart(code_result, function_stats, c_function_stats, detail_table)
         except ImportError:
-            messagebox.showwarning("警告", "需要安装matplotlib才能显示图表:\npip install matplotlib")
+            self._message_dialog.show_warning("需要安装matplotlib才能显示图表:\npip install matplotlib", "警告")
         except Exception as exc:  # pragma: no cover - 仅用于调试
             print(f"显示图表错误: {exc}")
             import traceback

@@ -2,11 +2,22 @@
 # -*- coding: utf-8 -*-
 
 """
-UI层模块
+UI层模块：提供统一的用户界面组件和基础设施。
 """
 
-# UI模块将在后续阶段逐步完善
-# 目前保留main.py中的UI代码，通过适配器模式连接
+from ui.chat_dialog import ChatDialogManager
+from ui.code_statistics import CodeStatisticsUI
+from ui.chart_renderer import ChartRenderer
+from ui.tk_root_manager import TkRootManager
+from ui.queue_processor import UIQueueProcessor
+from ui.message_dialog import MessageDialogHelper
 
-__all__ = []
+__all__ = [
+    "ChatDialogManager",
+    "CodeStatisticsUI",
+    "ChartRenderer",
+    "TkRootManager",
+    "UIQueueProcessor",
+    "MessageDialogHelper",
+]
 

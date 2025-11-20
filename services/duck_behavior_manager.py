@@ -4,10 +4,10 @@
 """
 唐小鸭行为与语音策略管理
 
-参考 Strategy2 项目的 DuckGame.java，将行为策略与语音策略解耦，
+将行为策略与语音策略解耦，
 并在不同事件中触发对应的动画与提示。
 
-新增：通过 pyttsx3 实现本地语音播报（若可用）。
+通过 pyttsx3 实现本地语音播报。
 """
 
 import gc
@@ -17,7 +17,7 @@ from queue import Queue
 from typing import Callable, Dict, Iterable, List, Optional
 
 try:
-    import pyttsx3  # 本地 TTS 引擎（离线）
+    import pyttsx3  # 本地 TTS 引擎
 except ImportError:
     pyttsx3 = None
 
@@ -245,8 +245,8 @@ class SpeechEngine:
                         # 播报文本
                         engine.say(text)
                         
-                        # 直接使用 runAndWait()，这是最可靠的方法
-                        # 关键是在每次使用后完全清理引擎，确保下次可以正常使用
+                        # 直接使用 runAndWait()
+                        # 在每次使用后完全清理引擎，确保下次可以正常使用
                         try:
                             engine.runAndWait()
                             # 在 runAndWait() 完成后，等待一小段时间确保语音真正播放完成

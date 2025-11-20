@@ -144,6 +144,6 @@ class RedPacketMovementController:
         x, y = packet.get_position()
         width, height = packet.width, packet.height
         
-        # 可以在这里添加物理效果（重力、摩擦力等）
+        # 后续可以在这里添加移动物理效果
         # 目前保持简单的线性移动
 
