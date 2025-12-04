@@ -123,7 +123,7 @@ class CommandProcessor:
 
     def __init__(self):
         """初始化命令处理器。"""
-        self._handlers: List[CommandHandler] = []
+        self._handlers: List[Tuple[int, CommandHandler]] = []
         self._default_handler: Optional[Callable[[str, Dict], None]] = None
 
     def register(
@@ -145,15 +145,9 @@ class CommandProcessor:
             priority: 优先级（数字越大优先级越高，默认0）
         """
         command_handler = PatternCommandHandler(name, patterns, handler, description)
-
-        # 按优先级插入（优先级高的在前）
-        inserted = False
-        for i, existing_handler in enumerate(self._handlers):
-            # 这里简化处理，直接插入到列表末尾
-            # 实际可以按priority排序，但为了简单起见，按注册顺序匹配
-            pass
-
-        self._handlers.append(command_handler)
+        self._handlers.append((priority, command_handler))
+        # 按优先级排序（优先级高的在前）
+        self._handlers.sort(key=lambda item: item[0])
         print(f"[CommandProcessor] 注册命令: {name} (模式: {patterns})")
 
     def register_handler(self, handler: CommandHandler, priority: int = 0) -> None:
@@ -164,7 +158,8 @@ class CommandProcessor:
             handler: 命令处理器对象
             priority: 优先级
         """
-        self._handlers.append(handler)
+        self._handlers.append((priority, handler))
+        self._handlers.sort(key=lambda item: item[0])
         print(f"[CommandProcessor] 注册命令处理器: {handler.name}")
 
     def set_default_handler(self, handler: Callable[[str, Dict], None]) -> None:
@@ -192,7 +187,7 @@ class CommandProcessor:
             return False
 
         # 按注册顺序匹配命令（后注册的优先级更高）
-        for handler in reversed(self._handlers):
+        for priority, handler in sorted(self._handlers, key=lambda item: item[0], reverse=True):
             if handler.match(user_input):
                 print(f"[CommandProcessor] 匹配命令: {handler.name}")
                 if handler.execute(user_input, context):
@@ -216,7 +211,8 @@ class CommandProcessor:
         Returns:
             命令列表，每个元素为(name, description)元组
         """
-        return [(handler.name, handler.description) for handler in self._handlers]
+        sorted_handlers = sorted(self._handlers, key=lambda item: item[0], reverse=True)
+        return [(handler.name, handler.description) for _, handler in sorted_handlers]
 
     def get_help_text(self) -> str:
         """
@@ -226,7 +222,7 @@ class CommandProcessor:
             帮助文本字符串
         """
         lines = ["可用命令："]
-        for handler in self._handlers:
+        for _, handler in sorted(self._handlers, key=lambda item: item[0], reverse=True):
             if handler.description:
                 lines.append(f"  - {handler.name}: {handler.description}")
             else:

@@ -69,9 +69,10 @@ class TkRootManager:
         Args:
             has_active_windows: 是否有活跃的Tk窗口需要更新
         """
-        if not self.is_initialized() or not has_active_windows:
+        if not self.is_initialized():
             return
-
+        
+        # 即使 has_active_windows 为 False，也要更新，因为可能有新窗口刚创建
         try:
             self._update_counter += 1
             # 每帧都调用update_idletasks()，确保UI更新

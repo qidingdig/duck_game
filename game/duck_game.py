@@ -24,6 +24,7 @@ sys.path.insert(0, current_dir)
 from utils.config import Config
 from services.advanced_code_counter import AdvancedCodeCounter
 from services.ai_service import AIService
+from services.roll_call_service import RollCallService
 from ui.chat_dialog import ChatDialogManager
 from ui.code_statistics import CodeStatisticsUI
 from ui.tk_root_manager import TkRootManager
@@ -32,6 +33,7 @@ from ui.message_dialog import MessageDialogHelper
 from services.duck_behavior_manager import DuckBehaviorManager
 from game.characters import Duckling
 from game.command_processor import CommandProcessor
+from game.roll_call_manager import RollCallManager
 from core.game_state import GameState, GameStateManager
 from core.event_system import EventManager
 from game.minigames.red_packet_game import RedPacketGameManager
@@ -92,16 +94,22 @@ class DuckGame:
         self.code_counter = AdvancedCodeCounter()
         # 初始化行为管理器
         self.behavior_manager = DuckBehaviorManager(self._update_text_display)
-        # 初始化命令处理器
+        # 点名服务与管理器
+        self.roll_call_service = RollCallService()
+        self._message_dialog = MessageDialogHelper()
         self.command_processor = CommandProcessor()
         self._setup_commands()
+        self.roll_call_manager = RollCallManager(
+            service=self.roll_call_service,
+            ui_queue=self._ui_queue,
+            message_dialog=self._message_dialog,
+        )
         # 初始化红包游戏管理器
         self._init_red_packet_game_manager()
         
         # 初始化UI基础设施
         self._tk_root_manager = TkRootManager(update_interval=5)
         self._ui_queue_processor = UIQueueProcessor()
-        self._message_dialog = MessageDialogHelper()
         self._need_config_dialog = False  # 标记是否需要创建配置对话框
         self.code_stats_ui: Optional[CodeStatisticsUI] = None
         self.chat_ui: Optional[ChatDialogManager] = None
@@ -110,6 +118,8 @@ class DuckGame:
         if self._tk_root_manager.initialize():
             tk_root = self._tk_root_manager.get_root()
             self._message_dialog = MessageDialogHelper(tk_root=tk_root)
+            if hasattr(self, "roll_call_manager"):
+                self.roll_call_manager._message_dialog = self._message_dialog
             
             # 注册UI队列消息处理器
             self._setup_ui_queue_handlers()
@@ -128,6 +138,10 @@ class DuckGame:
                 trigger_behavior_callback=self.trigger_duck_behavior,
                 default_target_dir=os.path.dirname(os.path.abspath(__file__)),
             )
+        else:
+            print("[WARNING] Tkinter root 初始化失败，UI功能可能不可用")
+            # 即使初始化失败，也尝试注册处理器（可能部分功能仍可用）
+            self._setup_ui_queue_handlers()
         
         # 字体设置
         try:
@@ -140,10 +154,7 @@ class DuckGame:
         
         print("=== 唐老鸭小游戏启动 ===")
         print("点击唐老鸭开始对话！")
-        print("可用命令:")
-        print("- 我要抢红包")
-        print("- 我要ai问答")
-        print("- 我要统计代码量")
+        print(self.command_processor.get_help_text())
         print("========================")
     
     def _setup_ui_queue_handlers(self):
@@ -183,11 +194,43 @@ class DuckGame:
             if hasattr(self, 'behavior_manager'):
                 self.behavior_manager.trigger(event_name, getattr(self, 'ducklings', []))
         
+        def handle_show_roll_call_window(item):
+            print(f"[DEBUG] handle_show_roll_call_window 被调用")
+            if not hasattr(self, 'roll_call_manager'):
+                print(f"[DEBUG] 错误：roll_call_manager 不存在")
+                return
+            if not hasattr(self, '_tk_root_manager'):
+                print(f"[DEBUG] 错误：_tk_root_manager 不存在")
+                return
+            tk_root = self._tk_root_manager.get_root()
+            print(f"[DEBUG] tk_root = {tk_root}")
+            if tk_root:
+                try:
+                    self.roll_call_manager.show_window(tk_root)
+                    print(f"[DEBUG] show_window 调用成功")
+                except Exception as e:
+                    print(f"[DEBUG] show_window 调用失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[DEBUG] 错误：tk_root 为 None")
+        
+        def handle_show_roll_call_records_window(item):
+            if hasattr(self, 'roll_call_manager') and hasattr(self, '_tk_root_manager'):
+                tk_root = self._tk_root_manager.get_root()
+                if tk_root:
+                    self.roll_call_manager.show_records_window(tk_root)
+        
         # 注册所有处理器
         self._ui_queue_processor.register_handler("append_text", handle_append_text)
         self._ui_queue_processor.register_handler("show_charts", handle_show_charts)
         self._ui_queue_processor.register_handler("change_duckling_theme", handle_change_theme)
         self._ui_queue_processor.register_handler("duck_behavior", handle_duck_behavior)
+        self._ui_queue_processor.register_handler("show_roll_call_window", handle_show_roll_call_window)
+        self._ui_queue_processor.register_handler("show_roll_call_records_window", handle_show_roll_call_records_window)
+        
+        # 调试：打印已注册的处理器
+        print(f"[DEBUG] 已注册的UI队列处理器: {self._ui_queue_processor.get_registered_types()}")
     
     def _init_red_packet_game_manager(self):
         """初始化红包游戏管理器"""
@@ -309,6 +352,44 @@ class DuckGame:
             patterns=[r'^统计代码[：:]\s*.+'],
             handler=handle_code_stat_quick,
             description="快速统计指定目录的代码量"
+        )
+
+        def handle_roll_call(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            print(f"[DEBUG] handle_roll_call 被调用，user_input={user_input}")
+            if hasattr(game, "roll_call_manager"):
+                print(f"[DEBUG] roll_call_manager 存在，调用 request_window")
+                try:
+                    game.roll_call_manager.request_window()
+                    print(f"[DEBUG] request_window 调用成功")
+                except Exception as e:
+                    print(f"[DEBUG] request_window 调用失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    game._update_text_display(f"唐老鸭: 打开点名窗口失败: {e}\n")
+            else:
+                print(f"[DEBUG] 错误：roll_call_manager 不存在")
+                game._update_text_display("唐老鸭: 点名模块尚未初始化。\n")
+
+        self.command_processor.register(
+            name="roll_call",
+            patterns=["我要点名", "开始点名"],
+            handler=handle_roll_call,
+            description="开启唐老鸭点名"
+        )
+        
+        def handle_roll_call_records(user_input: str, ctx: Dict):
+            game = ctx["game"]
+            if hasattr(game, "roll_call_manager"):
+                game.roll_call_manager.request_records_window()
+            else:
+                game._update_text_display("唐老鸭: 点名模块尚未初始化。\n")
+        
+        self.command_processor.register(
+            name="roll_call_records",
+            patterns=["查看点名记录", "点名记录", "导出点名记录"],
+            handler=handle_roll_call_records,
+            description="查看和导出点名记录"
         )
         
         # 设置默认处理器（普通AI对话）

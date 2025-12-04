@@ -11,6 +11,7 @@ from ui.chart_renderer import ChartRenderer
 from ui.tk_root_manager import TkRootManager
 from ui.queue_processor import UIQueueProcessor
 from ui.message_dialog import MessageDialogHelper
+from ui.roll_call_window import RollCallWindow
 
 __all__ = [
     "ChatDialogManager",
@@ -19,5 +20,6 @@ __all__ = [
     "TkRootManager",
     "UIQueueProcessor",
     "MessageDialogHelper",
+    "RollCallWindow",
 ]
 

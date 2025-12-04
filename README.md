@@ -8,6 +8,7 @@
 - 🧧 **红包游戏**：唐小鸭移动抢红包，统计红包数量和金额
 - 🤖 **AI 对话**：基于 Ollama 的智能对话功能
 - 📊 **代码统计**：支持多语言代码量统计，包含可视化图表
+- 🗒️ **唐老鸭点名**：支持全点/抽点、多种策略、假条校验与迟到补签
 
 ## 系统要求
 
@@ -76,6 +77,7 @@ python main.py
 - **`我要ai问答`** - 开始 AI 对话
 - **`我要统计代码量`** - 打开代码统计配置界面
 - **`统计代码: <目录路径>`** - 快速统计指定目录的代码（使用默认设置）
+- **`我要点名` / `开始点名`** - 打开唐老鸭点名调度窗口
 
 ### 代码统计功能
 
@@ -88,6 +90,15 @@ python main.py
 - 生成可视化图表（柱状图、饼图、函数长度直方图）
 - 支持导出为 CSV、JSON、XLSX 格式
 - 支持语言明细表显示和导出
+
+### 唐老鸭点名
+
+1. 在对话框中输入 `我要点名` / `开始点名`。
+2. 在同一窗口中配置点名方式（全点/抽点）、抽点人数、策略（随机 / 旷课最多 / 点到最少）。
+3. 开始后窗口会依次展示学生信息并语音播报，提供“到 / 请假 / 旷课 / 迟到”按钮。
+4. “请假”仅在该学生已提交本节课假条的情况下生效。
+5. 若学生在 10 分钟内从旷课补到，可通过“迟到”按钮输入学号，将对应记录从“旷课”改为“迟到”。
+6. 所有点名结果会自动写入数据库，可通过命令扩展或服务层接口做汇总。
 
 ## 项目结构
 
@@ -110,6 +121,8 @@ duck_game/
 │   ├── __init__.py
 │   ├── duck_game.py          # 游戏主类
 │   ├── characters.py         # 角色类
+│   ├── command_processor.py  # 命令处理器
+│   ├── roll_call_manager.py  # 点名流程管理器
 │   ├── red_packet.py         # 红包游戏逻辑（旧版，保留兼容）
 │   └── minigames/            # 小游戏模块（新）
 │       ├── __init__.py
@@ -130,11 +143,13 @@ duck_game/
 │   ├── message_dialog.py       # 统一消息对话框工具
 │   ├── chat_dialog.py          # 唐老鸭聊天窗口与输入处理
 │   ├── code_statistics.py      # 代码统计配置面板 + 导出逻辑
-│   └── chart_renderer.py       # Matplotlib 图表渲染与布局
+│   ├── chart_renderer.py       # Matplotlib 图表渲染与布局
+│   └── roll_call_window.py     # 点名配置 + 执行窗口
 ├── services/                  # 服务模块
 │   ├── __init__.py
-│   ├── ai_service.py         # AI 服务
+│   ├── ai_service.py          # AI 服务
 │   ├── advanced_code_counter.py  # 代码统计服务
+│   ├── roll_call_service.py   # 唐老鸭点名服务（SQLite）
 │   └── duck_behavior_manager.py  # 小鸭行为管理器
 └── utils/                     # 工具模块
     ├── __init__.py
@@ -162,6 +177,9 @@ duck_game/
   - 可扩展的命令系统
   - 支持模式匹配（字符串和正则表达式）
   - 支持命令优先级和默认处理器
+- **RollCallManager**: 点名流程管理器
+  - 管理点名配置、学生名单与状态流转
+  - 与 RollCallService / RollCallWindow 协同
 - **Minigames**: 小游戏模块，采用基类设计，易于扩展
 
 ### 服务层 (services/)
@@ -174,6 +192,10 @@ duck_game/
   - 自动降级和错误处理
   - 对话历史管理
 - **AdvancedCodeCounter**: 代码统计服务
+- **RollCallService**: 点名服务
+  - SQLite 数据存储
+  - 学生/假条/点名记录
+  - 支持迟到补签的时间校验
 - **DuckBehaviorManager**: 小鸭行为管理
 
 ### UI层 (ui/)
@@ -189,6 +211,7 @@ UI 层已完全模块化，分为基础设施层和功能组件层：
 - `chat_dialog.py`：管理唐老鸭聊天窗口、输入事件与线程安全文本更新（通过 UI 队列）
 - `code_statistics.py`：封装 Tk 配置窗口、用户选项收集、后台统计线程、CSV/JSON/XLSX 导出、语言明细表构建
 - `chart_renderer.py`：统一管理 Matplotlib 的窗口、图表布局、函数直方图和语言明细表渲染
+- `roll_call_window.py`：唐老鸭点名配置 + 执行一体化窗口，支持状态录入与迟到补签提示
 
 **架构优势**：
 - DuckGame 完全脱离 Tkinter 细节，只通过接口交互
