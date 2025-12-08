@@ -22,7 +22,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 from utils.config import Config
-from services.advanced_code_counter import AdvancedCodeCounter
+from services.code_statistics import AdvancedCodeCounter
 from services.ai_service import AIService
 from services.roll_call_service import RollCallService
 from ui.chat_dialog import ChatDialogManager
@@ -37,6 +37,8 @@ from game.roll_call_manager import RollCallManager
 from core.game_state import GameState, GameStateManager
 from core.event_system import EventManager
 from game.minigames.red_packet_game import RedPacketGameManager
+from game.render_manager import RenderManager
+from game.game_loop import GameLoop
 import random
 
 class DuckGame:
@@ -136,21 +138,19 @@ class DuckGame:
                 ui_queue=self._ui_queue,
                 update_text_callback=self._update_text_display,
                 trigger_behavior_callback=self.trigger_duck_behavior,
-                default_target_dir=os.path.dirname(os.path.abspath(__file__)),
+                default_target_dir=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # 项目根目录
             )
         else:
             print("[WARNING] Tkinter root 初始化失败，UI功能可能不可用")
             # 即使初始化失败，也尝试注册处理器（可能部分功能仍可用）
             self._setup_ui_queue_handlers()
         
-        # 字体设置
-        try:
-            self.font = pygame.font.Font(None, 36)
-            self.small_font = pygame.font.Font(None, 24)
-        except:
-            # 如果字体加载失败，使用默认字体
-            self.font = pygame.font.Font(None, 36)
-            self.small_font = pygame.font.Font(None, 24)
+        # 初始化渲染管理器
+        self.render_manager = RenderManager(
+            screen=self.screen,
+            config=self.config,
+            ducklings=self.ducklings
+        )
         
         print("=== 唐老鸭小游戏启动 ===")
         print("点击唐老鸭开始对话！")
@@ -499,122 +499,6 @@ class DuckGame:
         else:
             self._message_dialog.show_warning("图表渲染组件未初始化。", "警告")
 
-    def _create_code_stat_chart(self, code_result):
-        """已废弃的遗留接口，保留占位。"""
-        return
-        """
-        try:
-            import matplotlib.pyplot as plt
-
-            # 解析语言->代码行数
-            labels = []
-            values = []
-
-            try:
-                # code_result是一个字典，包含 "summary", "by_language", "elapsed_time"
-                # 需要从 by_language 中提取数据
-                if isinstance(code_result, dict) and "by_language" in code_result:
-                    by_language = code_result["by_language"]
-                    # by_language 是一个字典，键是语言名称，值是统计数据对象
-                    for lang, stat in by_language.items():
-                        code_lines = None
-                        if hasattr(stat, 'code'):
-                            code_lines = getattr(stat, 'code')
-                        elif isinstance(stat, dict) and 'code' in stat:
-                            code_lines = stat['code']
-                        elif isinstance(stat, (int, float)):
-                            code_lines = int(stat)
-                        if code_lines is None or code_lines == 0:
-                            continue
-                        labels.append(str(lang))  # 语言名称
-                        values.append(int(code_lines))
-                elif hasattr(code_result, 'items'):
-                    # 如果直接是字典格式
-                    for lang, stat in code_result.items():
-                        if lang == "summary" or lang == "elapsed_time":
-                            continue  # 跳过summary和elapsed_time
-                        code_lines = None
-                        if hasattr(stat, 'code'):
-                            code_lines = getattr(stat, 'code')
-                        elif isinstance(stat, dict) and 'code' in stat:
-                            code_lines = stat['code']
-                        elif isinstance(stat, (int, float)):
-                            code_lines = int(stat)
-                        if code_lines is None or code_lines == 0:
-                            continue
-                        labels.append(str(lang))
-                        values.append(int(code_lines))
-            except Exception as e:
-                print(f"[DEBUG] 解析代码统计数据错误: {e}")
-                import traceback
-                traceback.print_exc()
-                return
-
-            if not labels:
-                print("[DEBUG] 没有找到有效的语言统计数据")
-                return
-
-            # 按代码行数排序（降序）
-            sorted_data = sorted(zip(labels, values), key=lambda x: -x[1])
-            labels = [lang for lang, _ in sorted_data]
-            values = [val for _, val in sorted_data]
-
-            # 创建独立的matplotlib窗口
-            fig = plt.figure(figsize=(12, 6))
-            fig.canvas.manager.set_window_title('代码统计图表')
-            
-            # 创建两个子图
-            ax1 = fig.add_subplot(121)
-            ax2 = fig.add_subplot(122)
-            
-            # 柱状图
-            ax1.bar(labels, values, color="#4C9AFF")
-            ax1.set_title("各语言代码行数（柱状图）", fontsize=12)
-            ax1.set_ylabel("行数", fontsize=10)
-            ax1.tick_params(axis='x', rotation=45, labelsize=9)
-            ax1.tick_params(axis='y', labelsize=9)
-            
-            # 饼图
-            ax2.pie(values, labels=labels, autopct='%1.1f%%', startangle=140)
-            ax2.set_title("各语言占比（饼图）", fontsize=12)
-            
-            plt.tight_layout()
-            plt.show(block=False)  # 非阻塞显示
-            
-        except Exception as e:
-            print(f"创建代码统计图表错误: {e}")
-            import traceback
-            traceback.print_exc()
-        """
-
-    def _create_function_stat_chart(self, function_stats, lang_name="Python"):
-        """已废弃，保留兼容。"""
-        return
-
-    def switch_to_code_tab(self):
-        """切换到代码统计标签页 - 已废弃，使用独立窗口"""
-        pass
-
-    def switch_to_function_tab(self):
-        """切换到函数统计标签页 - 已废弃，使用独立窗口"""
-        pass
-    
-    def _clear_container(self, container):
-        try:
-            for child in container.winfo_children():
-                child.destroy()
-        except Exception:
-            pass
-
-    def show_code_chart_tab(self, container, code_result):
-        """已废弃 - 使用独立matplotlib窗口"""
-        # 这个方法已废弃，保留以避免调用错误
-        pass
-
-    def show_function_chart_tab(self, container, function_stats):
-        """已废弃 - 使用独立matplotlib窗口"""
-        # 这个方法已废弃，保留以避免调用错误
-        pass
     
     def _update_text_display(self, text):
         """将文本更新请求放入队列，由主线程消费后更新Tkinter组件。"""
@@ -665,119 +549,46 @@ class DuckGame:
     
     def render(self):
         """渲染游戏画面"""
-        # 清屏
-        self.screen.fill(self.config.background_color)
-        
-        # 绘制背景装饰
-        self.render_background()
-        
-        # 绘制角色
-        self.render_characters()
-        
-        # 绘制红包游戏效果
-        if hasattr(self, 'red_packet_game_active') and self.red_packet_game_active:
-            self.render_red_packets()
-        
-        # 绘制UI信息
-        self.render_ui()
-        
-        # 更新显示
-        pygame.display.flip()
+        self.render_manager.render_all(
+            donald_pos=self.donald_pos,
+            red_packet_game=self.red_packet_game,
+            red_packet_game_active=getattr(self, 'red_packet_game_active', False)
+        )
     
-    def render_red_packets(self):
-        """绘制红包"""
-        if self.red_packet_game and self.red_packet_game.is_active():
-            self.red_packet_game.render(self.screen)
+    def _handle_resize(self, width: int, height: int):
+        """处理窗口大小改变"""
+        self.config.SCREEN_WIDTH = width
+        self.config.SCREEN_HEIGHT = height
     
-    def render_background(self):
-        """绘制背景装饰"""
-        # 绘制云朵
-        cloud_color = (255, 255, 255)
-        for i in range(3):
-            x = 100 + i * 300
-            y = 50 + i * 20
-            pygame.draw.ellipse(self.screen, cloud_color, (x, y, 80, 40))
-            pygame.draw.ellipse(self.screen, cloud_color, (x + 20, y - 10, 60, 30))
-            pygame.draw.ellipse(self.screen, cloud_color, (x + 40, y, 60, 30))
-        # 绘制地面
-        ground_color = (34, 139, 34)
-        pygame.draw.rect(self.screen, ground_color, (0, self.config.SCREEN_HEIGHT - 50, self.config.SCREEN_WIDTH, 50))
-    
-    def render_characters(self):
-        """绘制角色"""
-        # 绘制唐老鸭
-        donald_rect = pygame.Rect(self.donald_pos[0], self.donald_pos[1], 
-                                 self.config.CHARACTER_SIZE, self.config.CHARACTER_SIZE)
-        pygame.draw.ellipse(self.screen, self.config.DONALD_COLOR, donald_rect)
-        pygame.draw.ellipse(self.screen, (0, 0, 0), donald_rect, 3)
-        
-        # 绘制唐老鸭的眼睛
-        eye_size = 10
-        eye_y = self.donald_pos[1] + self.config.CHARACTER_SIZE // 3
-        pygame.draw.circle(self.screen, (0, 0, 0), 
-                         (self.donald_pos[0] + self.config.CHARACTER_SIZE // 3, eye_y), eye_size)
-        pygame.draw.circle(self.screen, (0, 0, 0), 
-                         (self.donald_pos[0] + 2 * self.config.CHARACTER_SIZE // 3, eye_y), eye_size)
-        
-        # 绘制唐老鸭的嘴巴
-        mouth_y = self.donald_pos[1] + 2 * self.config.CHARACTER_SIZE // 3
-        pygame.draw.ellipse(self.screen, (255, 165, 0), 
-                          (self.donald_pos[0] + self.config.CHARACTER_SIZE // 4, mouth_y - 8, 
-                           self.config.CHARACTER_SIZE // 2, 16))
-        
-        # 绘制汤小鸭（使用Duckling对象）
-        for duckling in self.ducklings:
-            duckling.render(self.screen)
-    
-    def render_ui(self):
-        """绘制UI信息"""
-        # 绘制标题 - 使用英文避免中文字符问题
-        title_text = self.font.render("Duck Game", True, (0, 0, 0))
-        self.screen.blit(title_text, (10, 10))
-        
-        # 绘制提示信息
-        hint_text = self.small_font.render("Click Donald Duck to start!", True, (0, 0, 0))
-        self.screen.blit(hint_text, (10, 50))
+    def _update_ui(self):
+        """更新UI（在游戏循环中调用）"""
+        # 定期更新Tkinter，确保输入和关闭事件能够被处理
+        dialog_active = self.chat_ui.is_active() if self.chat_ui else False
+        config_active = self.code_stats_ui.has_active_window() if self.code_stats_ui else False
+        has_active_windows = dialog_active or config_active
+        self._tk_root_manager.update_loop(has_active_windows)
+
+        # 无论Tk窗口是否存在，都处理一次UI队列
+        try:
+            self._process_ui_queue()
+        except Exception:
+            pass
     
     def run(self):
         """运行游戏主循环"""
-        clock = pygame.time.Clock()
-        running = True
+        # 创建游戏循环管理器
+        game_loop = GameLoop(
+            screen=self.screen,
+            update_callback=self.update,
+            render_callback=self.render,
+            handle_click_callback=self.handle_click,
+            handle_resize_callback=self._handle_resize,
+            ui_update_callback=self._update_ui,
+            fps=60
+        )
         
-        while running:
-            # 处理事件
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.VIDEORESIZE:
-                    # 处理窗口大小改变事件
-                    # Pygame会自动更新屏幕大小，我们只需要更新配置
-                    self.config.SCREEN_WIDTH = event.w
-                    self.config.SCREEN_HEIGHT = event.h
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:  # 左键点击
-                        self.handle_click(event.pos)
-            
-            # 更新游戏状态
-            self.update()
-            
-            # 渲染画面
-            self.render()
-            
-            # 定期更新Tkinter，确保输入和关闭事件能够被处理
-            dialog_active = self.chat_ui.is_active() if self.chat_ui else False
-            config_active = self.code_stats_ui.has_active_window() if self.code_stats_ui else False
-            has_active_windows = dialog_active or config_active
-            self._tk_root_manager.update_loop(has_active_windows)
-
-            # 无论Tk窗口是否存在，都处理一次UI队列
-            try:
-                self._process_ui_queue()
-            except Exception:
-                pass
-            
-            # 控制帧率
-            clock.tick(60)
+        # 运行游戏循环
+        game_loop.run()
         
         # 主循环结束后清理资源
         if hasattr(self, 'behavior_manager') and self.behavior_manager:

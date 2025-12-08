@@ -2,50 +2,89 @@
 # -*- coding: utf-8 -*-
 
 """
-代码统计服务 - 基于之前的代码统计功能
+代码统计基础类 - 包含公共功能
 """
 
 import os
 import fnmatch
-import time
 from typing import Dict, List, Optional, Tuple
 
-class FileStat:
-    """文件统计类"""
-    def __init__(self, path: str):
-        self.path = path
-        self.total = 0
-        self.code = 0
-        self.comment = 0
-        self.blank = 0
+from models.code_statistics import FileStat
 
-    def add_line(self, kind: str) -> None:
-        self.total += 1
-        if kind == "code":
-            self.code += 1
-        elif kind == "comment":
-            self.comment += 1
-        elif kind == "blank":
-            self.blank += 1
 
-class Summary:
-    """统计汇总类"""
-    def __init__(self):
-        self.files = 0
-        self.total = 0
-        self.code = 0
-        self.comment = 0
-        self.blank = 0
-
-    def add(self, stat: FileStat) -> None:
-        self.files += 1
-        self.total += stat.total
-        self.code += stat.code
-        self.comment += stat.comment
-        self.blank += stat.blank
-
-class CodeCounter:
-    """代码统计服务"""
+class CodeCounterBase:
+    """代码统计基础类，包含公共功能"""
+    
+    # 文件扩展名到语言名称的映射
+    EXT_TO_LANGUAGE = {
+        ".py": "Python",
+        ".pyw": "Python",
+        ".pyi": "Python Stub",
+        ".pyx": "Cython",
+        ".pxd": "Cython Header",
+        ".pxi": "Cython Include",
+        ".java": "Java",
+        ".c": "C",
+        ".cpp": "C++",
+        ".cc": "C++",
+        ".cxx": "C++",
+        ".h": "C/C++ Header",
+        ".hpp": "C++ Header",
+        ".hh": "C++ Header",
+        ".hin": "C/C++ Header",
+        ".cs": "C#",
+        ".js": "JavaScript",
+        ".ts": "TypeScript",
+        ".tsx": "TypeScript React",
+        ".jsx": "JavaScript React",
+        ".vue": "Vue",
+        ".go": "Go",
+        ".rs": "Rust",
+        ".swift": "Swift",
+        ".kt": "Kotlin",
+        ".scala": "Scala",
+        ".php": "PHP",
+        ".rb": "Ruby",
+        ".sql": "SQL",
+        ".html": "HTML",
+        ".htm": "HTML",
+        ".css": "CSS",
+        ".pcss": "PostCSS",
+        ".postcss": "PostCSS",
+        ".scss": "SCSS",
+        ".less": "LESS",
+        ".xml": "XML",
+        ".json": "JSON",
+        ".yaml": "YAML",
+        ".yml": "YAML",
+        ".cfg": "Config",
+        ".conf": "Config",
+        ".properties": "Properties",
+        ".toml": "TOML",
+        ".gradle": "Gradle",
+        ".md": "Markdown",
+        ".markdown": "Markdown",
+        ".rst": "reStructuredText",
+        ".tex": "TeX",
+        ".sty": "TeX",
+        ".cls": "TeX",
+        ".csv": "CSV",
+        ".tsv": "TSV",
+        ".txt": "Text",
+        ".mk": "Makefile",
+        ".make": "Makefile",
+        ".gmk": "Makefile",
+        ".thrift": "Thrift",
+        ".ps1": "PowerShell",
+        ".psm1": "PowerShell",
+        ".sh": "Shell",
+        ".bash": "Shell",
+        ".zsh": "Shell",
+        ".bat": "Batch",
+        ".cmd": "Batch",
+        ".m": "MATLAB",
+        ".r": "R",
+    }
     
     def __init__(self):
         # 单行注释符
@@ -110,9 +149,33 @@ class CodeCounter:
         }
         
         # 文本类型文件扩展名
-        self.text_like_exts = set(self.single_line_comments.keys()) | set(self.multi_line_comments.keys()) | {
-            ".txt", ".md", ".csv", ".tsv", ".cfg", ".conf", ".gradle", ".properties"
-        }
+        self.text_like_exts = (
+            set(self.single_line_comments.keys())
+            | set(self.multi_line_comments.keys())
+            | set(self.EXT_TO_LANGUAGE.keys())
+            | {
+                ".txt",
+                ".md",
+                ".csv",
+                ".tsv",
+                ".cfg",
+                ".conf",
+                ".gradle",
+                ".properties",
+            }
+        )
+
+        self._default_exclude = [
+            "**/.git/**",
+            "**/.svn/**",
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/__pycache__/**",
+            "**/.vscode/**",
+            "**/.VSCodeCounter/**",
+        ]
         
         # 二进制文件魔术头
         self.binary_magic_prefixes = [
@@ -122,6 +185,12 @@ class CodeCounter:
     def is_binary(self, path: str, sample_size: int = 4096) -> bool:
         """检查文件是否为二进制文件"""
         try:
+            # 确保路径是字符串类型，避免线程安全问题
+            if not isinstance(path, str):
+                return True
+            if not os.path.exists(path):
+                return True
+            
             with open(path, "rb") as f:
                 chunk = f.read(sample_size)
                 if not chunk:
@@ -140,18 +209,30 @@ class CodeCounter:
                 text_bytes = bytes(range(32, 127)) + b"\n\r\t\b\f\x1b"
                 non_text = sum(1 for b in chunk if b not in text_bytes)
                 return (non_text / max(1, len(chunk))) > 0.30
+        except (OSError, IOError, PermissionError, UnicodeDecodeError):
+            # 文件无法读取时，保守地认为是二进制文件
+            return True
         except Exception:
+            # 其他异常也保守处理
             return True
     
     def detect_encoding(self, path: str) -> str:
         """检测文件编码"""
         try:
+            # 确保路径是字符串类型，避免线程安全问题
+            if not isinstance(path, str):
+                return "utf-8"
+            if not os.path.exists(path):
+                return "utf-8"
+            
             with open(path, "rb") as f:
                 head = f.read(4)
             if head.startswith(b"\xff\xfe") or head.startswith(b"\xfe\xff"):
                 return "utf-16"
             if head.startswith(b"\xef\xbb\xbf"):
                 return "utf-8-sig"
+            return "utf-8"
+        except (OSError, IOError, PermissionError):
             return "utf-8"
         except Exception:
             return "utf-8"
@@ -219,10 +300,15 @@ class CodeCounter:
     def count_file(self, path: str) -> Optional[FileStat]:
         """统计单个文件"""
         try:
-            if self.is_binary(path):
+            # 确保路径是字符串类型
+            if not isinstance(path, str):
+                return None
+            
+            ext = os.path.splitext(path)[1].lower()
+            # 对于常见文本/源码扩展名跳过二进制检测，以免误判
+            if ext not in self.text_like_exts and self.is_binary(path):
                 return None
             stat = FileStat(path=path)
-            ext = os.path.splitext(path)[1].lower()
             in_block: Optional[Tuple[str, str]] = None
             encoding = self.detect_encoding(path)
             with open(path, "r", encoding=encoding, errors="replace") as f:
@@ -230,48 +316,8 @@ class CodeCounter:
                     kind, in_block = self.classify_line(line, ext, in_block)
                     stat.add_line(kind)
             return stat
+        except (OSError, IOError, PermissionError, UnicodeDecodeError):
+            return None
         except Exception:
             return None
-    
-    def count_code_lines(self, path: str = ".", include: List[str] = None, exclude: List[str] = None) -> str:
-        """统计代码行数"""
-        start_ts = time.perf_counter()
-        
-        if include is None:
-            include = []
-        if exclude is None:
-            exclude = ["**/.git/**", "**/.svn/**", "**/node_modules/**", "**/.venv/**", "**/dist/**", "**/build/**"]
-        
-        per_file: List[FileStat] = []
-        for f in self.iter_files(path, include, exclude):
-            st = self.count_file(f)
-            if st is not None:
-                per_file.append(st)
-        
-        summary = Summary()
-        by_ext: Dict[str, Summary] = {}
-        
-        for st in per_file:
-            summary.add(st)
-            ext = os.path.splitext(st.path)[1].lower() or "<noext>"
-            by_ext.setdefault(ext, Summary())
-            by_ext[ext].add(st)
-        
-        elapsed_s = time.perf_counter() - start_ts
-        
-        # 生成统计报告
-        result = f"代码统计报告:\n"
-        result += f"总文件数: {summary.files}\n"
-        result += f"总行数: {summary.total}\n"
-        result += f"代码行数: {summary.code}\n"
-        result += f"注释行数: {summary.comment}\n"
-        result += f"空行数: {summary.blank}\n"
-        result += f"耗时: {elapsed_s:.3f} 秒\n\n"
-        
-        # 按文件类型统计
-        if by_ext:
-            result += "按文件类型统计:\n"
-            for ext, sm in sorted(by_ext.items(), key=lambda x: (-x[1].code, x[0])):
-                result += f"{ext}: {sm.files}个文件, {sm.code}行代码\n"
-        
-        return result
+

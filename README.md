@@ -108,49 +108,60 @@ duck_game/
 ├── setup.py                   # 安装脚本
 ├── requirements.txt           # Python 依赖包列表
 ├── README.md                  # 项目说明文档
-├── assets/                    # 资源文件目录
-│   ├── images/               # 图片资源
-│   └── sounds/               # 音频资源
 ├── core/                      # 核心系统层
 │   ├── __init__.py
 │   ├── game_state.py         # 游戏状态管理器（状态机）
-│   ├── event_system.py        # 事件系统（观察者模式）
-│   ├── render_system.py       # 渲染系统（分层渲染）
-│   └── physics_system.py     # 物理系统（碰撞检测、移动）
+│   └── event_system.py        # 事件系统（观察者模式）
 ├── game/                      # 游戏逻辑层
 │   ├── __init__.py
 │   ├── duck_game.py          # 游戏主类
-│   ├── characters.py         # 角色类
+│   ├── characters.py         # 角色类（唐老鸭、小鸭）
 │   ├── command_processor.py  # 命令处理器
 │   ├── roll_call_manager.py  # 点名流程管理器
-│   ├── red_packet.py         # 红包游戏逻辑（旧版，保留兼容）
-│   └── minigames/            # 小游戏模块（新）
-│       ├── __init__.py
-│       ├── base_minigame.py  # 小游戏基类
-│       └── red_packet_game/  # 红包游戏模块（已细化）
+│   └── minigames/            # 小游戏模块
+│       └── red_packet_game/  # 红包游戏模块
 │           ├── __init__.py
-│           ├── game_manager.py      # 游戏管理器
-│           ├── red_packet.py        # 红包实体
-│           ├── spawner.py           # 红包生成器
-│           ├── collision_detector.py  # 碰撞检测
-│           ├── movement_controller.py  # 移动控制
-│           ├── statistics.py        # 统计收集器
-│           └── renderer.py          # 渲染器
-├── ui/                        # UI层（已完全模块化）
+│           └── ...
+├── ui/                        # UI层（模块化设计）
 │   ├── __init__.py
 │   ├── tk_root_manager.py      # Tk根窗口管理器
 │   ├── queue_processor.py      # UI队列消息处理器
 │   ├── message_dialog.py       # 统一消息对话框工具
-│   ├── chat_dialog.py          # 唐老鸭聊天窗口与输入处理
-│   ├── code_statistics.py      # 代码统计配置面板 + 导出逻辑
-│   ├── chart_renderer.py       # Matplotlib 图表渲染与布局
-│   └── roll_call_window.py     # 点名配置 + 执行窗口
-├── services/                  # 服务模块
+│   ├── chat_dialog.py          # 唐老鸭聊天窗口
+│   ├── code_statistics.py      # 代码统计配置窗口
+│   ├── roll_call_window.py     # 点名配置与执行窗口
+│   ├── roll_call_records_window.py  # 点名记录查看窗口
+│   ├── chart_renderer.py       # 图表渲染器（策略模式）
+│   ├── chart_types.py          # 图表类型定义（柱状图、饼图等）
+│   ├── chart_layout.py         # 图表布局策略
+│   └── chart_data_extractor.py # 图表数据提取器
+├── services/                  # 服务层（业务逻辑）
 │   ├── __init__.py
-│   ├── ai_service.py          # AI 服务
-│   ├── advanced_code_counter.py  # 代码统计服务
-│   ├── roll_call_service.py   # 唐老鸭点名服务（SQLite）
-│   └── duck_behavior_manager.py  # 小鸭行为管理器
+│   ├── ai_service.py          # AI对话服务
+│   ├── roll_call_service.py   # 点名服务（SQLite数据库）
+│   ├── duck_behavior_manager.py  # 小鸭行为管理器
+│   ├── red_packet_service.py  # 红包游戏服务
+│   └── code_statistics/       # 代码统计模块（重构后）
+│       ├── __init__.py
+│       ├── base.py            # 代码统计基类（公共功能）
+│       ├── advanced_counter.py # 增强统计服务（继承基类）
+│       ├── statistics_service.py  # 统计业务逻辑服务
+│       ├── report_formatter.py # 报告格式化器
+│       ├── result_exporter.py  # 结果导出管理器
+│       └── exporters/          # 导出器模块（策略模式）
+│           ├── __init__.py
+│           ├── base_exporter.py  # 导出器基类
+│           ├── csv_exporter.py    # CSV导出器
+│           ├── json_exporter.py    # JSON导出器
+│           └── xlsx_exporter.py   # XLSX导出器
+├── models/                    # 数据模型层
+│   ├── __init__.py
+│   └── code_statistics.py     # 代码统计数据模型（统一dataclass）
+├── data/                      # 数据访问层
+│   ├── __init__.py
+│   ├── database.py           # 数据库连接管理
+│   ├── repositories.py        # 数据仓库模式实现
+│   └── database_migration.py # 数据库迁移管理
 └── utils/                     # 工具模块
     ├── __init__.py
     └── config.py             # 配置管理
@@ -164,8 +175,6 @@ duck_game/
 
 - **GameStateManager**: 统一管理游戏状态，使用状态机模式
 - **EventManager**: 解耦模块间通信，使用观察者模式
-- **RenderSystem**: 分层渲染管理，支持多渲染器
-- **PhysicsSystem**: 物理计算（碰撞检测、移动控制）
 
 ### 游戏逻辑层 (game/)
 
@@ -191,11 +200,17 @@ duck_game/
   - 支持Ollama原生格式（/api/generate端点）
   - 自动降级和错误处理
   - 对话历史管理
-- **AdvancedCodeCounter**: 代码统计服务
+- **CodeStatistics模块**（重构后，模块化设计）:
+  - `CodeCounterBase`: 公共基类，包含文件遍历、行分类等公共功能
+  - `AdvancedCodeCounter`: 增强统计服务，继承基类，提供语言统计、函数统计等功能
+  - `CodeStatisticsService`: 统计业务逻辑服务，协调统计执行和报告格式化
+  - `ReportFormatter`: 报告格式化器，负责文本报告格式化
+  - `ResultExporter`: 结果导出管理器，使用策略模式管理多种导出格式
+  - `exporters/`: 导出器子模块（CSV、JSON、XLSX），易于扩展新格式
 - **RollCallService**: 点名服务
   - SQLite 数据存储
-  - 学生/假条/点名记录
-  - 支持迟到补签的时间校验
+  - 学生/假条/点名记录管理
+  - 支持迟到补签的时间校验（10分钟内）
 - **DuckBehaviorManager**: 小鸭行为管理
 
 ### UI层 (ui/)
@@ -209,9 +224,13 @@ UI 层已完全模块化，分为基础设施层和功能组件层：
 
 **功能组件层**：
 - `chat_dialog.py`：管理唐老鸭聊天窗口、输入事件与线程安全文本更新（通过 UI 队列）
-- `code_statistics.py`：封装 Tk 配置窗口、用户选项收集、后台统计线程、CSV/JSON/XLSX 导出、语言明细表构建
-- `chart_renderer.py`：统一管理 Matplotlib 的窗口、图表布局、函数直方图和语言明细表渲染
-- `roll_call_window.py`：唐老鸭点名配置 + 执行一体化窗口，支持状态录入与迟到补签提示
+- `code_statistics.py`：代码统计配置窗口，协调统计服务和导出器
+- `roll_call_window.py`：点名配置与执行窗口，支持状态录入与迟到补签
+- `roll_call_records_window.py`：点名记录查看窗口，支持记录查看、导出和删除
+- `chart_renderer.py`：图表渲染器，使用策略模式管理图表类型和布局
+- `chart_types.py`：图表类型定义（柱状图、饼图、函数统计图等），易于扩展新图表类型
+- `chart_layout.py`：图表布局策略（默认布局、紧凑布局等），易于扩展新布局
+- `chart_data_extractor.py`：图表数据提取器，从统计结果中提取图表所需数据
 
 **架构优势**：
 - DuckGame 完全脱离 Tkinter 细节，只通过接口交互
@@ -256,22 +275,38 @@ A: 请检查：
 
 ### 重构进度
 
-项目正在进行架构重构，采用更模块化、面向对象的设计：
+项目已完成主要架构重构，采用模块化、面向对象的设计：
 
-- ✅ **阶段1完成**: 核心系统模块（GameStateManager, EventManager, RenderSystem, PhysicsSystem）
-- ✅ **阶段2完成**: 红包游戏模块细化（RedPacket, Spawner, CollisionDetector, MovementController, Statistics, Renderer, GameManager）
-- 🔄 **阶段3进行中**: UI层模块（代码统计配置/图表已独立至 `ui/`，其余 Tk 组件正在迁移）
-- 🔄 **阶段4进行中**: 游戏主类重构
-- ⏳ **阶段5待进行**: 完整测试和优化
+- ✅ **核心系统模块**：GameStateManager, EventManager
+- ✅ **代码统计模块重构**：
+  - 提取公共基类 `CodeCounterBase`，消除代码重复
+  - 模块化目录结构 `services/code_statistics/`
+  - 统一数据模型 `models/code_statistics.py`
+  - 策略模式实现导出器 `exporters/`
+  - 职责分离：统计服务、报告格式化器、导出管理器
+- ✅ **可视化模块**：使用策略模式实现图表类型和布局，符合开闭原则
+- ✅ **UI层模块化**：完全独立的UI组件，职责清晰
+- ✅ **数据访问层**：Repository模式，数据库迁移管理
 
 ### 扩展功能
 
 项目采用模块化设计，可以轻松扩展：
 
-- 在 `game/minigames/` 目录添加新的小游戏（继承 `BaseMinigame`）
-- 在 `services/` 目录添加新的服务
-- 在 `core/` 目录扩展核心系统功能
-- 在 `ui/` 目录添加新的UI组件
+- **添加新小游戏**：在 `game/minigames/` 目录创建新模块（继承 `BaseMinigame`）
+- **添加新服务**：在 `services/` 目录添加新的业务服务
+- **添加新图表类型**：
+  1. 在 `ui/chart_types.py` 中创建新图表类（继承 `ChartType`）
+  2. 在 `ui/chart_renderer.py` 中注册新图表类型
+  3. 在布局策略中添加新图表的布局配置
+- **添加新统计指标**：
+  1. 在 `services/code_statistics/advanced_counter.py` 中添加统计方法
+  2. 在 `models/code_statistics.py` 中添加数据模型（如需要）
+  3. 在 `services/code_statistics/statistics_service.py` 中集成新指标
+  4. 在 `ui/code_statistics.py` 中展示新指标
+  5. 在导出器中添加新指标的导出逻辑
+- **添加新导出格式**：
+  1. 在 `services/code_statistics/exporters/` 中创建新导出器（继承 `Exporter`）
+  2. 在 `services/code_statistics/result_exporter.py` 中注册新导出器
 
 ### 添加新小游戏
 

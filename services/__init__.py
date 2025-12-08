@@ -6,7 +6,7 @@
 """
 
 from services.ai_service import AIService
-from services.advanced_code_counter import AdvancedCodeCounter
+from services.code_statistics import AdvancedCodeCounter
 from services.duck_behavior_manager import DuckBehaviorManager
 from services.roll_call_service import RollCallService
 
