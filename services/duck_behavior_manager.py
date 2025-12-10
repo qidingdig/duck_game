@@ -49,10 +49,12 @@ class SoundStrategy:
     description: str = ""
 
     def play(self, notifier: Optional[Callable[[str], None]], speech_engine: Optional["SpeechEngine"]) -> None:
-        if notifier:
-            notifier(f"唐小鸭语音：{self.description}\n")
-        if speech_engine:
-            speech_engine.speak(self.description)
+        # 只有当description不为空时才播报
+        if self.description:
+            if notifier:
+                notifier(f"唐小鸭语音：{self.description}\n")
+            if speech_engine:
+                speech_engine.speak(self.description)
 
 
 class JumpBehavior(BehaviorStrategy):
@@ -60,6 +62,7 @@ class JumpBehavior(BehaviorStrategy):
     description = "蹦蹦跳跳"
 
     def start(self, duckling) -> None:
+        print(f"[DEBUG] JumpBehavior.start called for {duckling.name}")
         duckling.start_bounce()
 
     def stop(self, duckling) -> None:
@@ -71,6 +74,7 @@ class SpinBehavior(BehaviorStrategy):
     description = "转圈圈"
 
     def start(self, duckling) -> None:
+        print(f"[DEBUG] SpinBehavior.start called for {duckling.name}")
         duckling.start_spin()
 
     def stop(self, duckling) -> None:
@@ -82,6 +86,7 @@ class FlyBehavior(BehaviorStrategy):
     description = "飞起来了"
 
     def start(self, duckling) -> None:
+        print(f"[DEBUG] FlyBehavior.start called for {duckling.name}")
         duckling.start_fly()
 
     def stop(self, duckling) -> None:
@@ -98,6 +103,25 @@ class MeowSound(SoundStrategy):
 
 class BarkSound(SoundStrategy):
     description = "汪汪汪，太酷了！"
+
+
+class AttentionBehavior(BehaviorStrategy):
+    name = "attention"
+    description = "专注学习"
+
+    def start(self, duckling) -> None:
+        print(f"[DEBUG] AttentionBehavior.start called for {duckling.name}")
+        # 这里可以添加专注时的特殊外观逻辑
+        # 目前暂时使用弹跳效果
+        duckling.start_bounce()
+
+    def stop(self, duckling) -> None:
+        duckling.stop_bounce()
+
+
+class CallSound(SoundStrategy):
+    """点名语音"""
+    description = "点名了，注意听！"
 
 
 class DuckAction:
@@ -135,33 +159,60 @@ class DuckBehaviorManager:
             "red_packet": DuckAction(JumpBehavior(), QuackSound()),
             "ai_chat": DuckAction(SpinBehavior(), MeowSound()),
             "code_count": DuckAction(FlyBehavior(), BarkSound()),
+            "roll_call": DuckAction(AttentionBehavior(), CallSound()),  # 点名时播报"点名了，注意听！"
         }
         self._active_entries: List[Dict] = []
         if self.notifier and not self.speech_engine.available:
             self.notifier("提示：未检测到语音引擎（pyttsx3）。小鸭语音将以文本形式显示。\n")
 
     def trigger(self, event_name: str, ducklings: Iterable) -> None:
+        print(f"[DEBUG] DuckBehaviorManager.trigger called with event_name: {event_name}")
         action = self._actions.get(event_name)
         if not action:
+            print(f"[DEBUG] No action found for event: {event_name}, available actions: {list(self._actions.keys())}")
             return
         ducklings = list(ducklings)
         if not ducklings:
+            print(f"[DEBUG] No ducklings provided for event: {event_name}")
             return
+        print(f"[DEBUG] Starting action for {len(ducklings)} ducklings, behavior: {action.behavior.description}, sound: {action.sound.description}")
         action.start(ducklings, self.notifier, self.speech_engine)
+
+        # 对于持久性事件（如代码统计），使用更长的持续时间
+        if event_name == "code_count":
+            # 对于代码统计，使用更长的持续时间（30秒），直到手动停止
+            end_time = float('inf')  # 无限持续，直到手动停止
+            persistent = True
+        else:
+            end_time = time.time() + self.duration
+            persistent = False
+
         self._active_entries.append(
             {
                 "action": action,
                 "ducklings": ducklings,
-                "end_time": time.time() + self.duration,
+                "end_time": end_time,
+                "persistent": persistent,
             }
         )
+
+    def stop_event(self, event_name: str) -> None:
+        """手动停止指定事件的持久性行为"""
+        remaining: List[Dict] = []
+        for entry in self._active_entries:
+            # 检查是否是指定事件的持久性行为
+            if entry.get("persistent") and hasattr(entry["action"], "behavior") and entry["action"].behavior.name in [event_name, f"{event_name}_behavior"]:
+                entry["action"].stop(entry["ducklings"])
+                continue
+            remaining.append(entry)
+        self._active_entries = remaining
 
     def update(self) -> None:
         """定期调用，用于在持续时间结束后恢复原状"""
         now = time.time()
         remaining: List[Dict] = []
         for entry in self._active_entries:
-            if now >= entry["end_time"]:
+            if now >= entry["end_time"] and not entry.get("persistent", False):
                 entry["action"].stop(entry["ducklings"])
             else:
                 remaining.append(entry)

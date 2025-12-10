@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Deque, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, Optional
 
 from services.roll_call_service import RollCallService, Student
 from ui.roll_call_window import RollCallWindow
@@ -24,10 +24,12 @@ class RollCallManager:
         service: RollCallService,
         ui_queue,
         message_dialog: MessageDialogHelper,
+        trigger_behavior_callback: Optional[Callable[[str], None]] = None,
     ):
         self.service = service
         self._ui_queue = ui_queue
         self._message_dialog = message_dialog
+        self.trigger_behavior_callback = trigger_behavior_callback
 
         self._window: Optional[RollCallWindow] = None
         self._current_roll_call_id: Optional[int] = None
@@ -148,17 +150,31 @@ class RollCallManager:
         self._last_record_ids.clear()
 
         self._message_dialog.show_info(f"点名开始，共 {len(students)} 人。")
+
+        # 换装为点名主题
+        if hasattr(self, '_ui_queue') and self._ui_queue:
+            try:
+                self._ui_queue.put(("change_duckling_theme", "roll_call"), block=False)
+            except Exception:
+                pass
+
+        # 触发小鸭点名行为（弹跳，不播报语音）
+        if hasattr(self, 'trigger_behavior_callback') and callable(self.trigger_behavior_callback):
+            self.trigger_behavior_callback("roll_call")
         
-        # 推进到第一个学生（这会设置_current_student）
-        self._advance_student()
+        # 使用Tkinter的after方法延迟推进到第一个学生，避免阻塞UI线程
+        # 等待行为持续时间结束后再推进到第一个学生
+        # 这样特殊行为结束后才开始播报学生姓名
+        if self._window and hasattr(self._window, '_root') and self._window._root:
+            # 使用Tkinter的after方法，5000毫秒后执行
+            self._window._root.after(5000, self._advance_student)
+        else:
+            # 如果没有窗口，直接推进（不应该发生）
+            self._advance_student()
         
         # 最终验证状态
-        print(f"[DEBUG] _on_start_config完成: roll_call_id={self._current_roll_call_id}, student={self._current_student.get('name') if self._current_student else None}, roster剩余={len(self._roster)}")
-        
-        # 确保状态已设置
-        if not self._current_student:
-            print(f"[DEBUG] 错误：advance_student后_current_student仍为None，roster长度={len(self._roster)}")
-            self._message_dialog.show_warning("警告：点名开始但未设置当前学生，请重试。")
+        # 注意：由于使用了after延迟调用_advance_student，所以_current_student在此时还是None是正常的
+        print(f"[DEBUG] _on_start_config完成: roll_call_id={self._current_roll_call_id}, student=None (将在5秒后设置), roster剩余={len(self._roster)}")
 
     def _on_mark_status(self, status: str, student_id: Optional[str]) -> None:
         if status == "late":
@@ -338,7 +354,7 @@ class RollCallManager:
         if self._current_roll_call_id is None:
             print(f"[DEBUG] 警告：_current_roll_call_id为None，但_current_student已设置")
         
-        # 播报学生名字
+        # 播报学生名字（在特殊行为结束后）
         self._announce_student_name()
         
         # 最终验证
@@ -362,9 +378,9 @@ class RollCallManager:
                 
                 if self._speech_engine.available:
                     # 添加小延迟，确保之前的播报完成
-                    import time
                     time.sleep(0.1)
                     success = self._speech_engine.speak(name)
+                    print(f"[DEBUG] 播报学生姓名: {name}, 成功: {success}")
                     if not success:
                         print(f"[RollCallManager] 语音播报失败：无法添加到队列")
                 else:
@@ -400,6 +416,13 @@ class RollCallManager:
             traceback.print_exc()
     
     def _on_window_closed(self) -> None:
+        # 恢复小鸭原状
+        if hasattr(self, '_ui_queue') and self._ui_queue:
+            try:
+                self._ui_queue.put(("change_duckling_theme", "original"), block=False)
+            except Exception:
+                pass
+        
         self._window = None
         self._current_roll_call_id = None
         self._session_code = None

@@ -29,6 +29,17 @@ class Character:
         self.bounce_height = 10
         self.original_bounce = 0
         
+        # 转圈动画相关
+        self.spinning = False
+        self.spin_angle = 0
+        self.spin_speed = 5
+        
+        # 飞行动画相关
+        self.flying = False
+        self.fly_offset = 0
+        self.fly_speed = 3
+        self.fly_direction = 1
+        
         # 移动相关
         self.moving = False
         self.move_speed = 3
@@ -50,6 +61,14 @@ class Character:
         # 处理弹跳动画
         if self.animating:
             self.update_bounce()
+        
+        # 处理转圈动画
+        if self.spinning:
+            self.update_spin()
+        
+        # 处理飞行动画
+        if self.flying:
+            self.update_fly()
     
     def update_movement(self):
         """更新移动状态"""
@@ -87,6 +106,39 @@ class Character:
         """停止弹跳动画"""
         self.animating = False
         self.original_bounce = 0
+    
+    def update_spin(self):
+        """更新转圈动画"""
+        self.spin_angle += self.spin_speed
+        if self.spin_angle >= 360:
+            self.spin_angle = 0
+    
+    def start_spin(self):
+        """开始转圈动画"""
+        self.spinning = True
+        self.spin_angle = 0
+    
+    def stop_spin(self):
+        """停止转圈动画"""
+        self.spinning = False
+        self.spin_angle = 0
+    
+    def update_fly(self):
+        """更新飞行动画"""
+        self.fly_offset += self.fly_direction * self.fly_speed
+        if abs(self.fly_offset) >= 15:
+            self.fly_direction *= -1
+    
+    def start_fly(self):
+        """开始飞行动画"""
+        self.flying = True
+        self.fly_offset = 0
+        self.fly_direction = 1
+    
+    def stop_fly(self):
+        """停止飞行动画"""
+        self.flying = False
+        self.fly_offset = 0
     
     def reset_position(self):
         """重置到原始位置"""
@@ -259,22 +311,30 @@ class Duckling(Character):
         if not self.active:
             return
         
-        # 计算实际渲染位置
-        render_y = self.y - self.original_bounce
+        # 计算实际渲染位置（考虑弹跳和飞行效果）
+        render_y = self.y - self.original_bounce - self.fly_offset
+        
+        # 如果正在转圈，计算旋转后的位置（简化处理：使用偏移）
+        render_x = self.x
+        if self.spinning:
+            # 转圈效果：在原始位置周围做圆周运动
+            radius = 5
+            render_x = self.x + radius * math.cos(math.radians(self.spin_angle))
+            render_y = render_y + radius * math.sin(math.radians(self.spin_angle))
         
         # 绘制身体
-        body_rect = (self.x, render_y, self.width, self.height)
+        body_rect = (render_x, render_y, self.width, self.height)
         pygame.draw.ellipse(screen, self.color, body_rect)
         pygame.draw.ellipse(screen, (0, 0, 0), body_rect, 2)
         
         # 帽子
         if self.has_hat:
-            hat_rect = (self.x - 4, render_y - 12, self.width + 8, 15)
+            hat_rect = (render_x - 4, render_y - 12, self.width + 8, 15)
             pygame.draw.ellipse(screen, self.hat_color, hat_rect)
             pygame.draw.ellipse(screen, (0, 0, 0), hat_rect, 2)
             # 绘制帽子上的穗（只有有帽子时才绘制）
             tassel_y = render_y - 12
-            tassel_x = self.x + self.width // 2
+            tassel_x = render_x + self.width // 2
             pygame.draw.circle(screen, (255, 255, 0), (tassel_x, tassel_y), 3)
             pygame.draw.circle(screen, (0, 0, 0), (tassel_x, tassel_y), 3, 1)
         
@@ -282,14 +342,14 @@ class Duckling(Character):
         eye_size = self.eye_size
         eye_y = render_y + self.height // 3
         pygame.draw.circle(screen, (0, 0, 0), 
-                         (self.x + self.width // 3, eye_y), eye_size)
+                         (render_x + self.width // 3, eye_y), eye_size)
         pygame.draw.circle(screen, (0, 0, 0), 
-                         (self.x + 2 * self.width // 3, eye_y), eye_size)
+                         (render_x + 2 * self.width // 3, eye_y), eye_size)
         
         # 绘制嘴巴（使用完整的椭圆，参考唐老鸭的绘制方式）
         mouth_y = render_y + 2 * self.height // 3
         # 绘制填充的嘴巴（完整的椭圆）
-        beak_rect = (self.x + self.width // 4, mouth_y - 6, self.width // 2, 12)
+        beak_rect = (render_x + self.width // 4, mouth_y - 6, self.width // 2, 12)
         pygame.draw.ellipse(screen, self.beak_color, beak_rect)
         # 绘制嘴巴边框（完整的椭圆边框）
         pygame.draw.ellipse(screen, (0, 0, 0), beak_rect, 2)
@@ -297,7 +357,7 @@ class Duckling(Character):
         # 蝴蝶结
         if self.has_bow:
             bow_width = self.width // 2
-            bow_rect = (self.x + self.width // 4, render_y + self.height - 8, bow_width, 12)
+            bow_rect = (render_x + self.width // 4, render_y + self.height - 8, bow_width, 12)
             pygame.draw.ellipse(screen, self.bow_color, bow_rect)
             pygame.draw.ellipse(screen, (0, 0, 0), bow_rect, 2)
         
@@ -305,7 +365,7 @@ class Duckling(Character):
         text = self.font.render(self.name, True, (0, 0, 0))
         # 如果有帽子，名字位置更靠上，避免被帽子挡住
         name_y = render_y - 20 if self.has_hat else render_y - 15
-        text_rect = text.get_rect(center=(self.x + self.width // 2, name_y))
+        text_rect = text.get_rect(center=(render_x + self.width // 2, name_y))
         screen.blit(text, text_rect)
     
     def start_random_movement(self):
@@ -333,6 +393,24 @@ class Duckling(Character):
         self.hat_color = (25, 25, 112)
         self.has_bow = False
         self.color = (255, 170, 90)
+        self.eye_size = 6
+
+    def switch_to_chat_theme(self):
+        """AI问答主题：蓝色帽子，红色蝴蝶结"""
+        self.has_hat = True
+        self.hat_color = (30, 144, 255)  # 蓝色帽子
+        self.has_bow = True
+        self.bow_color = (255, 0, 0)  # 红色蝴蝶结
+        self.color = (255, 200, 120)
+        self.eye_size = 7
+
+    def switch_to_roll_call_theme(self):
+        """点名主题：紫色帽子，粉色蝴蝶结"""
+        self.has_hat = True
+        self.hat_color = (138, 43, 226)  # 紫色帽子
+        self.has_bow = True
+        self.bow_color = (255, 105, 180)  # 粉色蝴蝶结
+        self.color = (255, 180, 100)
         self.eye_size = 6
 
     def restore_original_appearance(self):

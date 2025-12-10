@@ -36,6 +36,7 @@ class CodeStatisticsUI:
         ui_queue,
         update_text_callback,
         trigger_behavior_callback,
+        stop_behavior_callback: Optional[Callable[[str], None]] = None,
         default_target_dir: Optional[str] = None,
         chart_renderer: Optional[ChartRenderer] = None,
     ):
@@ -44,6 +45,7 @@ class CodeStatisticsUI:
         self._ui_queue = ui_queue
         self._update_text = update_text_callback
         self._trigger_behavior = trigger_behavior_callback
+        self._stop_behavior = stop_behavior_callback
         self._default_target_dir = default_target_dir or os.getcwd()
         self._message_dialog = MessageDialogHelper(tk_root=tk_root)
         self._chart_renderer = chart_renderer or ChartRenderer(message_dialog=self._message_dialog)
@@ -449,6 +451,10 @@ class CodeStatisticsUI:
 
             self._enqueue_show_charts(result, function_stats, c_function_stats, detail_table)
             self._ui_queue.put(("change_duckling_theme", "original"))
+
+            # 停止代码统计行为
+            if self._stop_behavior:
+                self._stop_behavior("code_count")
         except Exception as exc:
             print(f"代码统计错误: {exc}")
             import traceback

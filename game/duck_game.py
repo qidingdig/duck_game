@@ -105,6 +105,7 @@ class DuckGame:
             service=self.roll_call_service,
             ui_queue=self._ui_queue,
             message_dialog=self._message_dialog,
+            trigger_behavior_callback=self.trigger_duck_behavior,
         )
         # 初始化红包游戏管理器
         self._init_red_packet_game_manager()
@@ -138,6 +139,7 @@ class DuckGame:
                 ui_queue=self._ui_queue,
                 update_text_callback=self._update_text_display,
                 trigger_behavior_callback=self.trigger_duck_behavior,
+                stop_behavior_callback=self.stop_duck_behavior,
                 default_target_dir=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # 项目根目录
             )
         else:
@@ -185,6 +187,10 @@ class DuckGame:
                         duckling.switch_to_excited_theme()
                     elif theme == "focused":
                         duckling.switch_to_focused_theme()
+                    elif theme == "chat":
+                        duckling.switch_to_chat_theme()
+                    elif theme == "roll_call":
+                        duckling.switch_to_roll_call_theme()
                     elif theme == "original":
                         duckling.restore_original_appearance()
         
@@ -463,8 +469,10 @@ class DuckGame:
     def start_ai_chat(self, user_input):
         """启动AI对话"""
         try:
-            # 触发AI行为
+            # 触发AI行为（转圈+语音）
             self.trigger_duck_behavior("ai_chat")
+            # 换装为AI问答主题
+            self._ui_queue.put(("change_duckling_theme", "chat"))
             # 显示正在思考（使用线程安全的方式）
             self._update_text_display("唐老鸭: 让我想想...\n")
             
@@ -478,6 +486,8 @@ class DuckGame:
             
             # 使用线程安全的方式显示结果
             self._update_text_display(f"唐老鸭: {ai_response}\n\n")
+            # AI问答结束后恢复原状
+            self._ui_queue.put(("change_duckling_theme", "original"))
                 
         except Exception as e:
             print(f"AI对话错误: {e}")
@@ -520,6 +530,11 @@ class DuckGame:
             self._ui_queue.put(("duck_behavior", event_name), block=False)
         except Exception as e:
             print(f"提交行为触发到队列失败: {e}")
+
+    def stop_duck_behavior(self, event_name: str):
+        """停止指定事件的持久性行为"""
+        if hasattr(self, 'behavior_manager'):
+            self.behavior_manager.stop_event(event_name)
 
     def _process_ui_queue(self, limit_per_frame: int = 20):
         """在主线程中调用：消费UI队列并执行对应Tk操作。"""
@@ -607,10 +622,13 @@ class DuckGame:
     
     def update(self):
         """更新游戏状态"""
-        # 更新小鸭行为状态
+        # 更新小鸭行为状态和动画
         if hasattr(self, 'ducklings'):
             allow_override = not getattr(self, 'red_packet_game_active', False)
             for duckling in self.ducklings:
+                # 更新动画状态（弹跳、转圈、飞行等）
+                duckling.update()
+                # 更新行为状态（如果有）
                 if hasattr(duckling, 'update_behavior_state'):
                     duckling.update_behavior_state(allow_position_override=allow_override)
         if hasattr(self, 'behavior_manager'):
