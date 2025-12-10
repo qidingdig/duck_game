@@ -452,9 +452,7 @@ class CodeStatisticsUI:
             self._enqueue_show_charts(result, function_stats, c_function_stats, detail_table)
             self._ui_queue.put(("change_duckling_theme", "original"))
 
-            # 停止代码统计行为
-            if self._stop_behavior:
-                self._stop_behavior("code_count")
+            # 注意：代码统计行为会在持续时间（5秒）后自动停止，不需要手动停止
         except Exception as exc:
             print(f"代码统计错误: {exc}")
             import traceback

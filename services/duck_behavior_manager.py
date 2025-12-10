@@ -178,14 +178,9 @@ class DuckBehaviorManager:
         print(f"[DEBUG] Starting action for {len(ducklings)} ducklings, behavior: {action.behavior.description}, sound: {action.sound.description}")
         action.start(ducklings, self.notifier, self.speech_engine)
 
-        # 对于持久性事件（如代码统计），使用更长的持续时间
-        if event_name == "code_count":
-            # 对于代码统计，使用更长的持续时间（30秒），直到手动停止
-            end_time = float('inf')  # 无限持续，直到手动停止
-            persistent = True
-        else:
-            end_time = time.time() + self.duration
-            persistent = False
+        # 所有事件都使用固定持续时间，不再使用无限持续
+        end_time = time.time() + self.duration
+        persistent = False
 
         self._active_entries.append(
             {

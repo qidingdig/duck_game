@@ -134,12 +134,34 @@ class ChatDialogManager:
             dialog_window.deiconify()
             dialog_window.update_idletasks()
 
-            input_frame = tk.Frame(dialog_window)
-            input_frame.pack(pady=10, padx=10, fill=tk.X)
-            tk.Label(input_frame, text="输入消息:", font=("Arial", 12)).pack(anchor=tk.W)
-            input_entry = tk.Entry(input_frame, font=("Arial", 12), width=50)
-            input_entry.pack(pady=5, fill=tk.X)
-            input_entry.bind("<Return>", self._handle_submit)
+            # 快捷按钮区域（放在最上面）
+            quick_button_frame = tk.Frame(dialog_window)
+            quick_button_frame.pack(pady=10, padx=10, fill=tk.X)
+            tk.Label(quick_button_frame, text="快捷操作:", font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 5))
+            
+            quick_buttons_frame = tk.Frame(quick_button_frame)
+            quick_buttons_frame.pack(fill=tk.X)
+            
+            # 创建四个快捷按钮
+            quick_commands = [
+                ("抢红包", "我要抢红包"),
+                ("统计代码量", "我要统计代码量"),
+                ("AI问答", "我要ai问答"),
+                ("点名", "我要点名"),
+            ]
+            
+            for i, (btn_text, command) in enumerate(quick_commands):
+                btn = tk.Button(
+                    quick_buttons_frame,
+                    text=btn_text,
+                    command=lambda cmd=command: self._handle_quick_command(cmd),
+                    font=("Arial", 10),
+                    width=12,
+                    relief=tk.RAISED,
+                    bg="#E8F4F8",
+                    activebackground="#D0E8F2"
+                )
+                btn.pack(side=tk.LEFT, padx=3, pady=2, fill=tk.X, expand=True)
 
             display_frame = tk.Frame(dialog_window)
             display_frame.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
@@ -157,6 +179,13 @@ class ChatDialogManager:
             text_display.pack(pady=5, fill=tk.BOTH, expand=True)
             scrollbar.config(command=text_display.yview)
 
+            input_frame = tk.Frame(dialog_window)
+            input_frame.pack(pady=10, padx=10, fill=tk.X)
+            tk.Label(input_frame, text="输入消息:", font=("Arial", 12)).pack(anchor=tk.W)
+            input_entry = tk.Entry(input_frame, font=("Arial", 12), width=50)
+            input_entry.pack(pady=5, fill=tk.X)
+            input_entry.bind("<Return>", self._handle_submit)
+            
             button_frame = tk.Frame(dialog_window)
             button_frame.pack(pady=10)
             tk.Button(button_frame, text="发送", command=self._handle_submit, font=("Arial", 12), width=10).pack(
@@ -177,7 +206,7 @@ class ChatDialogManager:
 
             welcome_msg = (
                 "唐老鸭: 你好！我是唐老鸭，有什么可以帮助你的吗？\n\n"
-                "提示：\n"
+                "您可以点击功能按钮快速开始，也可以输入以下命令：\n"
                 "- 输入「我要点名」或「开始点名」可以打开点名窗口\n"
                 "- 输入「查看点名记录」或「点名记录」可以查看和导出点名记录\n"
                 "- 输入'我要抢红包'可以开始红包游戏\n"
@@ -208,6 +237,16 @@ class ChatDialogManager:
         # 重新请求焦点
         self._need_set_focus = True
         self._focus_counter = 0
+    
+    def _handle_quick_command(self, command: str) -> None:
+        """处理快捷按钮点击，直接执行相应命令"""
+        self.insert_text(f"你: {command}\n")
+        if callable(self._on_command):
+            try:
+                self._on_command(command)
+            except Exception as exc:  # pragma: no cover
+                print(f"处理快捷命令时出错: {exc}")
+                traceback.print_exc()
 
     def _set_input_focus(self) -> None:
         try:
