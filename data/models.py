@@ -120,6 +120,7 @@ class RollCallRecord:
     id: Optional[int] = None
     roll_call_id: int = 0
     student_id: str = ""
+    student_name: Optional[str] = None  # 保存点名时的学生姓名快照，确保历史记录准确
     order_index: int = 0
     status: str = ""
     called_time: str = ""
@@ -132,6 +133,7 @@ class RollCallRecord:
             'id': self.id,
             'roll_call_id': self.roll_call_id,
             'student_id': self.student_id,
+            'student_name': self.student_name,
             'order_index': self.order_index,
             'status': self.status,
             'called_time': self.called_time,
@@ -142,14 +144,31 @@ class RollCallRecord:
     @classmethod
     def from_row(cls, row: tuple) -> RollCallRecord:
         """从数据库行创建对象"""
-        return cls(
-            id=row[0],
-            roll_call_id=row[1],
-            student_id=row[2],
-            order_index=row[3],
-            status=row[4],
-            called_time=row[5],
-            updated_time=row[6],
-            note=row[7],
-        )
+        # 兼容旧版本（没有student_name字段）和新版本
+        if len(row) >= 9:
+            # 新版本：包含student_name字段
+            return cls(
+                id=row[0],
+                roll_call_id=row[1],
+                student_id=row[2],
+                student_name=row[3],
+                order_index=row[4],
+                status=row[5],
+                called_time=row[6],
+                updated_time=row[7],
+                note=row[8],
+            )
+        else:
+            # 旧版本：没有student_name字段
+            return cls(
+                id=row[0],
+                roll_call_id=row[1],
+                student_id=row[2],
+                student_name=None,
+                order_index=row[3],
+                status=row[4],
+                called_time=row[5],
+                updated_time=row[6],
+                note=row[7],
+            )
 

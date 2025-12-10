@@ -65,13 +65,14 @@ class DatabaseMigration:
                 self._apply_migration(version, migration_script)
     
     def _get_target_version(self) -> int:
-        """获取目标版本（当前为1）"""
-        return 1
+        """获取目标版本（当前为2）"""
+        return 2
     
     def _get_migration_script(self, version: int) -> Optional[str]:
         """获取指定版本的迁移脚本"""
         migrations = {
             1: self._get_v1_migration_script(),
+            2: self._get_v2_migration_script(),
         }
         return migrations.get(version)
     
@@ -118,6 +119,21 @@ class DatabaseMigration:
                 FOREIGN KEY(roll_call_id) REFERENCES roll_calls(id),
                 FOREIGN KEY(student_id) REFERENCES students(student_id)
             );
+        """
+    
+    def _get_v2_migration_script(self) -> str:
+        """获取版本2的迁移脚本（添加student_name字段到roll_call_records表）"""
+        return """
+            -- 添加student_name字段到roll_call_records表
+            ALTER TABLE roll_call_records ADD COLUMN student_name TEXT;
+            
+            -- 为现有记录填充student_name（从students表获取）
+            UPDATE roll_call_records 
+            SET student_name = (
+                SELECT name FROM students 
+                WHERE students.student_id = roll_call_records.student_id
+            )
+            WHERE student_name IS NULL;
         """
     
     def _apply_migration(self, version: int, script: str) -> None:

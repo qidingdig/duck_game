@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 from services.roll_call_service import RollCallService, Student
 from ui.roll_call_window import RollCallWindow
@@ -75,6 +75,7 @@ class RollCallManager:
                 on_mark_callback=self._on_mark_status,
                 on_close_callback=self._on_window_closed,
                 on_view_records_callback=self._on_view_records,
+                on_import_students_callback=self._on_import_students,
             )
             print(f"[DEBUG] RollCallWindow 对象创建成功")
             self._window.show()
@@ -414,6 +415,24 @@ class RollCallManager:
             print(f"[RollCallManager] 打开记录窗口失败: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _on_import_students(self, file_path: str, update_existing: bool = True) -> Dict[str, Any]:
+        """处理导入学生请求"""
+        try:
+            return self.service.import_students_from_file(file_path, update_existing=update_existing)
+        except Exception as e:
+            print(f"[RollCallManager] 导入学生失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'total': 0,
+                'imported': 0,
+                'updated': 0,
+                'skipped': 0,
+                'errors': [str(e)],
+                'warnings': []
+            }
     
     def _on_window_closed(self) -> None:
         # 恢复小鸭原状

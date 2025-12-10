@@ -314,12 +314,13 @@ class SQLiteRollCallRecordRepository(RollCallRecordRepository):
             cursor.execute(
                 """
                 INSERT INTO roll_call_records
-                (roll_call_id, student_id, order_index, status, called_time, note)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (roll_call_id, student_id, student_name, order_index, status, called_time, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.roll_call_id,
                     record.student_id,
+                    record.student_name,
                     record.order_index,
                     record.status,
                     record.called_time,
@@ -340,7 +341,7 @@ class SQLiteRollCallRecordRepository(RollCallRecordRepository):
     
     def find_by_id(self, record_id: int) -> Optional[RollCallRecord]:
         query = """
-            SELECT id, roll_call_id, student_id, order_index, status, called_time, updated_time, note
+            SELECT id, roll_call_id, student_id, student_name, order_index, status, called_time, updated_time, note
             FROM roll_call_records
             WHERE id = ?
         """
@@ -349,7 +350,7 @@ class SQLiteRollCallRecordRepository(RollCallRecordRepository):
     
     def find_latest_by_roll_call_and_student(self, roll_call_id: int, student_id: str) -> Optional[RollCallRecord]:
         query = """
-            SELECT id, roll_call_id, student_id, order_index, status, called_time, updated_time, note
+            SELECT id, roll_call_id, student_id, student_name, order_index, status, called_time, updated_time, note
             FROM roll_call_records
             WHERE roll_call_id = ? AND student_id = ?
             ORDER BY called_time DESC
@@ -360,7 +361,7 @@ class SQLiteRollCallRecordRepository(RollCallRecordRepository):
     
     def find_by_roll_call_id(self, roll_call_id: int) -> List[RollCallRecord]:
         query = """
-            SELECT id, roll_call_id, student_id, order_index, status, called_time, updated_time, note
+            SELECT id, roll_call_id, student_id, student_name, order_index, status, called_time, updated_time, note
             FROM roll_call_records
             WHERE roll_call_id = ?
             ORDER BY order_index ASC

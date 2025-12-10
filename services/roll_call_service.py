@@ -8,9 +8,18 @@ Roll call service: handles SQLite storage, student roster, leave records, and ro
 
 from __future__ import annotations
 
+import csv
+import json
 import os
 import time
 from typing import Any, Dict, List, Optional
+
+try:
+    import openpyxl
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+    openpyxl = None
 
 from data.database_interface import DatabaseInterface
 from data.sqlite_database import SQLiteDatabase
@@ -150,9 +159,14 @@ class RollCallService:
         Returns:
             记录ID
         """
+        # 获取学生信息，保存姓名快照（确保历史记录准确）
+        student = self.student_repo.find_by_id(student_id)
+        student_name = student.name if student else None
+        
         record = RollCallRecord(
             roll_call_id=roll_call_id,
             student_id=student_id,
+            student_name=student_name,  # 保存点名时的学生姓名快照
             order_index=order_index,
             status=status,
             called_time=time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -211,12 +225,13 @@ class RollCallService:
     
     def get_roll_call_summary(self, session_code: Optional[str] = None) -> List[Dict[str, Any]]:
         """获取点名摘要"""
-        # 这里需要跨表查询，使用原始SQL
+        # 使用保存的student_name快照，确保历史记录准确
         query = """
-            SELECT r.session_code, r.started_at, rr.status, s.student_id, s.name
+            SELECT r.session_code, r.started_at, rr.status, rr.student_id, 
+                   COALESCE(rr.student_name, s.name) as name
             FROM roll_call_records rr
             JOIN roll_calls r ON rr.roll_call_id = r.id
-            JOIN students s ON rr.student_id = s.student_id
+            LEFT JOIN students s ON rr.student_id = s.student_id
         """
         params: tuple = ()
         if session_code:
@@ -233,7 +248,7 @@ class RollCallService:
                 "started_at": row[1],
                 "status": row[2],
                 "student_id": row[3],
-                "name": row[4],
+                "name": row[4],  # 优先使用保存的student_name，如果没有则使用当前学生表的name
             })
         
         return summary
@@ -282,7 +297,7 @@ class RollCallService:
             SELECT 
                 rr.id,
                 rr.student_id,
-                s.name,
+                COALESCE(rr.student_name, s.name) as name,
                 rr.order_index,
                 rr.status,
                 rr.called_time,
@@ -290,7 +305,7 @@ class RollCallService:
                 rr.note
             FROM roll_call_records rr
             JOIN roll_calls r ON rr.roll_call_id = r.id
-            JOIN students s ON rr.student_id = s.student_id
+            LEFT JOIN students s ON rr.student_id = s.student_id
             WHERE r.session_code = ?
             ORDER BY rr.order_index ASC
         """
@@ -301,7 +316,7 @@ class RollCallService:
             details.append({
                 "id": row[0],
                 "student_id": row[1],
-                "name": row[2],
+                "name": row[2],  # 优先使用保存的student_name，如果没有则使用当前学生表的name
                 "order_index": row[3],
                 "status": row[4],
                 "called_time": row[5],
@@ -588,3 +603,222 @@ class RollCallService:
         
         wb.save(output_path)
         return output_path
+    
+    def import_students_from_file(self, file_path: str, update_existing: bool = True) -> Dict[str, Any]:
+        """
+        从文件导入学生信息
+        
+        支持格式：
+        - CSV: 必须包含学号(student_id)和姓名(name)列，可选nickname, photo_path列
+        - Excel: 同上
+        - JSON: 数组格式，每个元素包含student_id, name等字段
+        
+        更新策略：
+        - 通过 student_id 判断学生是否已存在
+        - 如果 update_existing=True（默认）：
+          * 已存在：更新基本信息（name, nickname, photo_path），保留统计信息（cut_count, called_count）
+          * 不存在：新增学生
+        - 如果 update_existing=False：
+          * 已存在：跳过该记录，计入 skipped
+          * 不存在：新增学生
+        
+        Args:
+            file_path: 文件路径
+            update_existing: 是否更新已存在的学生（默认True）
+            
+        Returns:
+            包含导入结果的字典：
+            {
+                'success': bool,
+                'total': int,      # 总记录数
+                'imported': int,   # 新增数量
+                'updated': int,    # 更新数量（仅在update_existing=True时）
+                'skipped': int,    # 跳过数量（无效记录或已存在且update_existing=False）
+                'errors': List[str],  # 错误信息列表（真正的错误，如数据格式错误、必需字段缺失等）
+                'warnings': List[str]  # 警告信息列表（如已存在且跳过更新）
+            }
+        """
+        result = {
+            'success': False,
+            'total': 0,
+            'imported': 0,
+            'updated': 0,
+            'skipped': 0,
+            'errors': [],
+            'warnings': []
+        }
+        
+        if not os.path.exists(file_path):
+            result['errors'].append(f"文件不存在: {file_path}")
+            return result
+        
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        try:
+            students_data = []
+            
+            # 根据文件类型解析数据
+            if file_ext == '.csv':
+                students_data = self._parse_csv(file_path)
+            elif file_ext in ['.xlsx', '.xls']:
+                if not HAS_OPENPYXL:
+                    result['errors'].append("需要安装openpyxl库: pip install openpyxl")
+                    return result
+                students_data = self._parse_excel(file_path)
+            elif file_ext == '.json':
+                students_data = self._parse_json(file_path)
+            else:
+                result['errors'].append(f"不支持的文件格式: {file_ext}")
+                return result
+            
+            result['total'] = len(students_data)
+            
+            # 导入数据
+            for idx, student_data in enumerate(students_data, 1):
+                try:
+                    # 验证必需字段
+                    if not student_data.get('student_id') or not student_data.get('name'):
+                        result['skipped'] += 1
+                        result['errors'].append(f"第{idx}行: 缺少必需字段(student_id或name)")
+                        continue
+                    
+                    student_id = str(student_data['student_id']).strip()
+                    name = str(student_data['name']).strip()
+                    
+                    if not student_id or not name:
+                        result['skipped'] += 1
+                        result['errors'].append(f"第{idx}行: 学号或姓名为空")
+                        continue
+                    
+                    # 检查学生是否已存在
+                    existing_student = self.student_repo.find_by_id(student_id)
+                    
+                    # 如果学生已存在且不允许更新，则跳过（这是警告，不是错误）
+                    if existing_student and not update_existing:
+                        result['skipped'] += 1
+                        result['warnings'].append(f"第{idx}行: 学生 {student_id} ({name}) 已存在，跳过更新")
+                        continue
+                    
+                    # 如果学生已存在，更新学生信息
+                    # 注意：由于roll_call_records表中已保存student_name快照，历史记录不会受影响
+                    if existing_student:
+                        # 检查姓名是否改变，给出警告提示
+                        if existing_student.name != name:
+                            result['warnings'].append(
+                                f"第{idx}行: 学生 {student_id} 的姓名从 '{existing_student.name}' 更新为 '{name}'。"
+                                f"历史点名记录中的姓名已保存快照，不会改变。"
+                            )
+                        # 更新学生信息，保留统计信息
+                        student = Student(
+                            student_id=student_id,
+                            name=name,  # 允许更新姓名（历史记录已保存快照）
+                            nickname=student_data.get('nickname', '').strip() or existing_student.nickname or None,
+                            photo_path=student_data.get('photo_path', '').strip() or existing_student.photo_path or None,
+                            cut_count=existing_student.cut_count,
+                            called_count=existing_student.called_count,
+                        )
+                        result['updated'] += 1
+                    else:
+                        # 新增学生
+                        student = Student(
+                            student_id=student_id,
+                            name=name,
+                            nickname=student_data.get('nickname', '').strip() or None,
+                            photo_path=student_data.get('photo_path', '').strip() or None,
+                            cut_count=0,
+                            called_count=0,
+                        )
+                        result['imported'] += 1
+                    
+                    # 保存学生
+                    self.student_repo.save(student)
+                        
+                except Exception as e:
+                    result['skipped'] += 1
+                    result['errors'].append(f"第{idx}行处理失败: {str(e)}")
+            
+            result['success'] = True
+            
+        except Exception as e:
+            result['errors'].append(f"导入过程出错: {str(e)}")
+            import traceback
+            result['errors'].append(traceback.format_exc())
+        
+        return result
+    
+    def _parse_csv(self, file_path: str) -> List[Dict[str, Any]]:
+        """解析CSV文件"""
+        students = []
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # 处理可能的列名变体
+                student_data = {}
+                for key, value in row.items():
+                    key_normalized = key.strip()
+                    key_lower = key_normalized.lower()
+                    # 同时检查原始键名和转小写后的键名
+                    if key_normalized in ['学号', 'student_id', 'studentid', 'id'] or key_lower in ['student_id', 'studentid', 'id']:
+                        student_data['student_id'] = value
+                    elif key_normalized in ['姓名', 'name'] or key_lower == 'name':
+                        student_data['name'] = value
+                    elif key_normalized in ['昵称', 'nickname', 'nick'] or key_lower in ['nickname', 'nick']:
+                        student_data['nickname'] = value
+                    elif key_normalized in ['照片', 'photo', 'photo_path', '头像'] or key_lower in ['photo', 'photo_path']:
+                        student_data['photo_path'] = value
+                students.append(student_data)
+        return students
+    
+    def _parse_excel(self, file_path: str) -> List[Dict[str, Any]]:
+        """解析Excel文件"""
+        if not HAS_OPENPYXL:
+            raise ImportError("需要安装openpyxl库: pip install openpyxl")
+        
+        students = []
+        wb = openpyxl.load_workbook(file_path)
+        ws = wb.active
+        
+        # 读取表头
+        headers = []
+        header_row = ws[1]
+        for cell in header_row:
+            headers.append(cell.value or '')
+        
+        # 读取数据行
+        for row in ws.iter_rows(min_row=2, values_only=False):
+            student_data = {}
+            for idx, cell in enumerate(row):
+                if idx >= len(headers):
+                    break
+                header_raw = str(headers[idx]).strip() if headers[idx] else ''
+                header_lower = header_raw.lower()
+                value = cell.value
+                
+                # 同时检查原始键名和转小写后的键名
+                if header_raw in ['学号', 'student_id', 'studentid', 'id'] or header_lower in ['student_id', 'studentid', 'id']:
+                    student_data['student_id'] = str(value) if value else ''
+                elif header_raw in ['姓名', 'name'] or header_lower == 'name':
+                    student_data['name'] = str(value) if value else ''
+                elif header_raw in ['昵称', 'nickname', 'nick'] or header_lower in ['nickname', 'nick']:
+                    student_data['nickname'] = str(value) if value else ''
+                elif header_raw in ['照片', 'photo', 'photo_path', '头像'] or header_lower in ['photo', 'photo_path']:
+                    student_data['photo_path'] = str(value) if value else ''
+            
+            if student_data:
+                students.append(student_data)
+        
+        return students
+    
+    def _parse_json(self, file_path: str) -> List[Dict[str, Any]]:
+        """解析JSON文件"""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 支持数组格式
+        if isinstance(data, list):
+            return data
+        # 支持对象格式，包含students字段
+        elif isinstance(data, dict) and 'students' in data:
+            return data['students']
+        else:
+            raise ValueError("JSON格式错误: 期望数组或包含'students'字段的对象")

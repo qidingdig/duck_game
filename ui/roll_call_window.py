@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
+from tkinter import filedialog
 from typing import Any, Callable, Dict, Optional
 
 from ui.message_dialog import MessageDialogHelper
@@ -25,6 +26,7 @@ class RollCallWindow:
         on_mark_callback: Callable[[str, Optional[str]], None],
         on_close_callback: Optional[Callable[[], None]] = None,
         on_view_records_callback: Optional[Callable[[], None]] = None,
+        on_import_students_callback: Optional[Callable[[str, bool], Dict[str, Any]]] = None,
     ):
         self._root = tk_root
         self._message_dialog = message_dialog
@@ -32,6 +34,7 @@ class RollCallWindow:
         self._on_mark = on_mark_callback
         self._on_close = on_close_callback
         self._on_view_records = on_view_records_callback
+        self._on_import_students = on_import_students_callback
 
         self._window: Optional[tk.Toplevel] = None
         self._current_student: Optional[Dict[str, Any]] = None
@@ -146,6 +149,7 @@ class RollCallWindow:
         btn_frame.pack(fill=tk.X, pady=(10, 0))
         self._start_button = tk.Button(btn_frame, text="开始点名", command=self._handle_start, width=12, bg="#4CAF50", fg="white")
         self._start_button.pack(side=tk.LEFT)
+        tk.Button(btn_frame, text="导入学生", command=self._handle_import_students, width=10, bg="#FF9800", fg="white").pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="查看记录", command=self._handle_view_records, width=10, bg="#2196F3", fg="white").pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="关闭", command=self._handle_close, width=10).pack(side=tk.LEFT, padx=8)
 
@@ -239,6 +243,84 @@ class RollCallWindow:
                 if self._message_dialog:
                     self._message_dialog.show_error(f"打开记录窗口失败: {e}")
                 print(f"[RollCallWindow] 打开记录窗口失败: {e}")
+    
+    def _handle_import_students(self) -> None:
+        """导入学生按钮处理"""
+        if not self._on_import_students:
+            if self._message_dialog:
+                self._message_dialog.show_warning("导入功能未配置")
+            return
+        
+        # 打开文件选择对话框
+        file_path = filedialog.askopenfilename(
+            title="选择学生名单文件",
+            filetypes=[
+                ("所有支持格式", "*.csv;*.xlsx;*.xls;*.json"),
+                ("CSV文件", "*.csv"),
+                ("Excel文件", "*.xlsx;*.xls"),
+                ("JSON文件", "*.json"),
+                ("所有文件", "*.*")
+            ]
+        )
+        
+        if not file_path:
+            return
+        
+        # 询问用户是否更新已存在的学生
+        import tkinter.messagebox as messagebox
+        update_existing = messagebox.askyesno(
+            "导入选项",
+            "是否更新已存在的学生？\n\n"
+            "选择'是'：已存在的学生将更新基本信息（姓名、昵称、照片），但保留统计信息（旷课次数、点名次数）\n"
+            "选择'否'：已存在的学生将被跳过，只导入新学生"
+        )
+        
+        try:
+            # 调用回调函数导入学生
+            result = self._on_import_students(file_path, update_existing=update_existing)
+            
+            if result.get('success'):
+                total = result.get('total', 0)
+                imported = result.get('imported', 0)
+                updated = result.get('updated', 0)
+                skipped = result.get('skipped', 0)
+                
+                message = f"导入完成！\n"
+                message += f"总记录数: {total}\n"
+                message += f"新增: {imported}\n"
+                message += f"更新: {updated}\n"
+                if skipped > 0:
+                    message += f"跳过: {skipped}\n"
+                
+                # 显示警告信息（如已存在且跳过更新）
+                warnings = result.get('warnings', [])
+                if warnings:
+                    warning_msg = "\n".join(warnings[:5])  # 只显示前5个警告
+                    if len(warnings) > 5:
+                        warning_msg += f"\n... 还有 {len(warnings) - 5} 个警告"
+                    message += f"\n警告:\n{warning_msg}"
+                
+                # 显示错误信息（真正的错误，如数据格式错误）
+                errors = result.get('errors', [])
+                if errors:
+                    error_msg = "\n".join(errors[:5])  # 只显示前5个错误
+                    if len(errors) > 5:
+                        error_msg += f"\n... 还有 {len(errors) - 5} 个错误"
+                    message += f"\n错误:\n{error_msg}"
+                
+                if self._message_dialog:
+                    self._message_dialog.show_info(message)
+            else:
+                errors = result.get('errors', [])
+                error_msg = "\n".join(errors) if errors else "导入失败"
+                if self._message_dialog:
+                    self._message_dialog.show_error(f"导入失败:\n{error_msg}")
+        except Exception as e:
+            print(f"[RollCallWindow] 导入学生失败: {e}")
+            import traceback
+            traceback.print_exc()
+            if self._message_dialog:
+                self._message_dialog.show_error(f"导入失败: {str(e)}")
     
     def _handle_close(self) -> None:
         """关闭窗口处理"""

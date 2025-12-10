@@ -1,0 +1,28 @@
+[
+  {"student_id": "2023001", "name": "张三", "nickname": "三三", "photo_path": "photos/2023001.jpg"},
+  {"student_id": "2023002", "name": "李四", "nickname": "四四", "photo_path": "photos/2023002.jpg"},
+  {"student_id": "2023003", "name": "王五", "nickname": "五五", "photo_path": "photos/2023003.jpg"},
+  {"student_id": "2023004", "name": "赵六", "nickname": "六六", "photo_path": "photos/2023004.jpg"},
+  {"student_id": "2023005", "name": "钱七", "nickname": "七七", "photo_path": "photos/2023005.jpg"},
+  {"student_id": "2023006", "name": "孙八", "nickname": "八八", "photo_path": "photos/2023006.jpg"},
+  {"student_id": "2023007", "name": "周九", "nickname": "九九", "photo_path": "photos/2023007.jpg"},
+  {"student_id": "2023008", "name": "吴十", "nickname": "十十", "photo_path": "photos/2023008.jpg"},
+  {"student_id": "2023009", "name": "郑十一", "nickname": "十一", "photo_path": "photos/2023009.jpg"},
+  {"student_id": "2023010", "name": "王十二", "nickname": "十二", "photo_path": "photos/2023010.jpg"},
+  {"student_id": "2023011", "name": "李十三", "nickname": "十三", "photo_path": "photos/2023011.jpg"},
+  {"student_id": "2023012", "name": "张十四", "nickname": "十四", "photo_path": "photos/2023012.jpg"},
+  {"student_id": "2023013", "name": "刘十五", "nickname": "十五", "photo_path": "photos/2023013.jpg"},
+  {"student_id": "2023014", "name": "陈十六", "nickname": "十六", "photo_path": "photos/2023014.jpg"},
+  {"student_id": "2023015", "name": "杨十七", "nickname": "十七", "photo_path": "photos/2023015.jpg"},
+  {"student_id": "2023016", "name": "黄十八", "nickname": "十八", "photo_path": "photos/2023016.jpg"},
+  {"student_id": "2023017", "name": "周十九", "nickname": "十九", "photo_path": "photos/2023017.jpg"},
+  {"student_id": "2023018", "name": "吴二十", "nickname": "二十", "photo_path": "photos/2023018.jpg"},
+  {"student_id": "2023019", "name": "徐二一", "nickname": "二一", "photo_path": "photos/2023019.jpg"},
+  {"student_id": "2023020", "name": "朱二二", "nickname": "二二", "photo_path": "photos/2023020.jpg"},
+  {"student_id": "2023021", "name": "林二三", "nickname": "二三", "photo_path": "photos/2023021.jpg"},
+  {"student_id": "2023022", "name": "何二四", "nickname": "二四", "photo_path": "photos/2023022.jpg"},
+  {"student_id": "2023023", "name": "郭二五", "nickname": "二五", "photo_path": "photos/2023023.jpg"},
+  {"student_id": "2023024", "name": "马二六", "nickname": "二六", "photo_path": "photos/2023024.jpg"},
+  {"student_id": "2023025", "name": "罗二七", "nickname": "二七", "photo_path": "photos/2023025.jpg"}
+]
+
