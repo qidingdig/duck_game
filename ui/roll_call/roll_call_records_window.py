@@ -248,12 +248,9 @@ class RollCallRecordsWindow:
         item = self._sessions_tree.item(selection[0])
         # values[0] 是选择列，values[1] 是会话代码
         if len(item["values"]) < 2:
-            print(f"[DEBUG] _on_session_selected: values长度不足，values={item['values']}")
             return
         
         session_code = item["values"][1]  # 会话代码在第二列
-        print(f"[DEBUG] _on_session_selected: session_code={session_code}")
-
         self._selected_session = session_code
         self._current_session_label.config(text=session_code, fg="blue")
         self._refresh_records(session_code)
@@ -261,25 +258,15 @@ class RollCallRecordsWindow:
     def _refresh_records(self, session_code: str) -> None:
         """刷新记录列表"""
         if not self._records_tree:
-            print(f"[DEBUG] _refresh_records: _records_tree 不存在")
             return
-
-        print(f"[DEBUG] _refresh_records: session_code={session_code}")
 
         # 清空现有数据
         for item in self._records_tree.get_children():
             self._records_tree.delete(item)
 
         try:
+            from services.roll_call_service import STATUS_MAP
             details = self._service.get_session_details(session_code)
-            print(f"[DEBUG] _refresh_records: 获取到 {len(details)} 条记录")
-            
-            status_map = {
-                "present": "出勤",
-                "absent": "旷课",
-                "leave": "请假",
-                "late": "迟到",
-            }
 
             for detail in details:
                 # 插入记录
@@ -290,14 +277,13 @@ class RollCallRecordsWindow:
                         detail["order_index"],
                         detail["student_id"],
                         detail["name"],
-                        status_map.get(detail["status"], detail["status"]),
+                        STATUS_MAP.get(detail["status"], detail["status"]),
                         detail["called_time"],
                         detail["note"],
                     ),
                 )
-            print(f"[DEBUG] _refresh_records: 成功插入 {len(details)} 条记录")
         except Exception as e:
-            print(f"[DEBUG] _refresh_records: 异常 {e}")
+            print(f"[RollCallRecordsWindow] 刷新记录失败: {e}")
             import traceback
             traceback.print_exc()
             self._message_dialog.show_error(f"刷新记录列表失败: {e}")

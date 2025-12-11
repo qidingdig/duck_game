@@ -59,26 +59,22 @@ class RollCallWindow:
 
     # ------------------------------------------------------------------ UI --
     def show(self) -> None:
-        print(f"[DEBUG] RollCallWindow.show() 被调用")
-        print(f"[DEBUG] _root = {self._root}")
         if self._window and tk.Toplevel.winfo_exists(self._window):
-            print(f"[DEBUG] 窗口已存在，提升到前台")
             self._window.lift()
             return
 
-        print(f"[DEBUG] 创建新窗口")
         if not self._root:
-            print(f"[DEBUG] 错误：_root 为 None，无法创建窗口")
             return
         
+        from utils.config import Config
+        config = Config()
+        
         self._window = tk.Toplevel(self._root)
-        print(f"[DEBUG] Toplevel 窗口创建成功")
         self._window.title("唐老鸭点名")
-        self._window.geometry("720x600")
-        self._window.minsize(720, 600)
+        self._window.geometry(config.ROLL_CALL_WINDOW_SIZE)
+        self._window.minsize(*config.ROLL_CALL_WINDOW_MIN_SIZE)
         self._window.protocol("WM_DELETE_WINDOW", self._handle_close)
-        self._window.focus_set()  # 参考 CodeStatisticsUI 的写法
-        print(f"[DEBUG] 窗口属性设置完成")
+        self._window.focus_set()
 
         container = tk.Frame(self._window)
         container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -93,8 +89,6 @@ class RollCallWindow:
 
         self._set_execution_controls(enabled=False)
         self._refresh_mode()
-        
-        print(f"[DEBUG] 窗口内容构建完成")
 
     def _build_config_frame(self, parent: tk.Frame) -> None:
         mode_frame = tk.Frame(parent)
@@ -203,9 +197,6 @@ class RollCallWindow:
     def _handle_mark(self, status: str) -> None:
         from tkinter import simpledialog
 
-        # 调试信息
-        print(f"[DEBUG] _handle_mark调用: status={status}, window._current_student={self._current_student is not None}")
-
         # 对于迟到补签，不需要检查_current_student，直接调用manager
         if status == "late":
             default_value = self._current_student.get("student_id") if self._current_student else ""
@@ -225,9 +216,6 @@ class RollCallWindow:
         student_id = None
         if self._current_student:
             student_id = self._current_student.get("student_id")
-            print(f"[DEBUG] _handle_mark: 从窗口获取student_id={student_id}")
-        else:
-            print(f"[DEBUG] _handle_mark: 窗口_current_student为None，传递None给manager")
         
         try:
             self._on_mark(status, student_id)
@@ -344,17 +332,11 @@ class RollCallWindow:
 
     def set_student(self, student_info: Dict[str, Any]) -> None:
         """设置当前学生信息（确保与manager同步）"""
-        # 确保student_info不为None
-        if not student_info:
-            print(f"[DEBUG] set_student: student_info为None")
+        if not student_info or not self._student_name_label:
             return
         
         # 设置窗口的_current_student（重要：必须在更新UI之前设置）
         self._current_student = student_info
-        
-        if not self._student_name_label:
-            print(f"[DEBUG] set_student: _student_name_label为None，但_current_student已设置")
-            return
         
         name = student_info.get("name", "-")
         student_id = student_info.get("student_id", "-")
@@ -368,9 +350,6 @@ class RollCallWindow:
             self._photo_label.config(text=f"照片：{os.path.basename(photo_path)}")
         else:
             self._photo_label.config(text="照片：暂无")
-        
-        # 调试信息
-        print(f"[DEBUG] set_student完成: 学生 {student_id} - {name}, _current_student已设置: {self._current_student is not None}")
 
     def show_message(self, message: str) -> None:
         if self._student_note_label:

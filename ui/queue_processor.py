@@ -78,9 +78,7 @@ class UIQueueProcessor:
 
             if handler:
                 try:
-                    print(f"[DEBUG] UIQueueProcessor 处理消息类型: {message_type}")
                     handler(item)
-                    print(f"[DEBUG] UIQueueProcessor 消息处理完成: {message_type}")
                 except Exception as e:
                     print(f"[UIQueueProcessor] 处理消息 '{message_type}' 时出错: {e}")
                     traceback.print_exc()

@@ -56,3 +56,13 @@ class Config:
         
         # 背景颜色
         self.background_color = (135, 206, 235)  # 天蓝色背景
+        
+        # 点名相关配置
+        self.ROLL_CALL_WINDOW_SIZE = "720x600"
+        self.ROLL_CALL_WINDOW_MIN_SIZE = (720, 600)
+        self.ROLL_CALL_ADVANCE_DELAY_MS = 5000  # 点名推进延迟（毫秒）
+        self.ROLL_CALL_LATE_UPDATE_TIMEOUT_MINUTES = 10  # 迟到补签时间限制（分钟）
+        
+        # 文件导入相关配置
+        self.STUDENT_IMPORT_SUPPORTED_FORMATS = ['.csv', '.xlsx', '.xls', '.json']
+        self.STUDENT_IMPORT_ENCODING = 'utf-8-sig'  # CSV文件编码

@@ -12,7 +12,7 @@ import csv
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import openpyxl
@@ -38,6 +38,30 @@ from data.database_migration import DatabaseMigration
 
 
 DB_DEFAULT_PATH = os.path.join("data", "roll_call.db")
+
+# 状态映射常量
+STATUS_MAP = {
+    "present": "出勤",
+    "absent": "旷课",
+    "leave": "请假",
+    "late": "迟到",
+}
+
+# 学生信息列名映射配置
+STUDENT_COLUMN_MAPPING = {
+    'student_id': [
+        '学号', 'student_id', 'studentid', 'id'
+    ],
+    'name': [
+        '姓名', 'name'
+    ],
+    'nickname': [
+        '昵称', 'nickname', 'nick'
+    ],
+    'photo_path': [
+        '照片', 'photo', 'photo_path', '头像'
+    ],
+}
 
 
 class RollCallService:
@@ -427,14 +451,6 @@ class RollCallService:
         """
         import csv
         
-        # 状态映射
-        status_map = {
-            "present": "出勤",
-            "absent": "旷课",
-            "leave": "请假",
-            "late": "迟到",
-        }
-        
         # 如果指定了会话代码，使用旧格式（一行一条记录）
         if session_code:
             records = self.get_roll_call_summary(session_code)
@@ -442,7 +458,7 @@ class RollCallService:
                 writer = csv.writer(f)
                 writer.writerow(['会话代码', '开始时间', '学号', '姓名', '状态'])
                 for record in records:
-                    status = status_map.get(record['status'], record['status'])
+                    status = STATUS_MAP.get(record['status'], record['status'])
                     writer.writerow([
                         record['session_code'],
                         record['started_at'],
@@ -498,7 +514,7 @@ class RollCallService:
                     session_code = session['session_code']
                     if student.student_id in student_status_map and session_code in student_status_map[student.student_id]:
                         status = student_status_map[student.student_id][session_code]
-                        row.append(status_map.get(status, status))
+                        row.append(STATUS_MAP.get(status, status))
                     else:
                         row.append("")  # 没有点到该学生，留空
                 writer.writerow(row)
@@ -521,14 +537,6 @@ class RollCallService:
         except ImportError:
             raise ImportError("需要安装openpyxl库: pip install openpyxl")
         
-        # 状态映射
-        status_map = {
-            "present": "出勤",
-            "absent": "旷课",
-            "leave": "请假",
-            "late": "迟到",
-        }
-        
         # 如果指定了会话代码，使用旧格式（一行一条记录）
         if session_code:
             records = self.get_roll_call_summary(session_code)
@@ -540,7 +548,7 @@ class RollCallService:
             ws.append(headers)
             
             for record in records:
-                status = status_map.get(record['status'], record['status'])
+                status = STATUS_MAP.get(record['status'], record['status'])
                 ws.append([
                     record['session_code'],
                     record['started_at'],
@@ -596,7 +604,7 @@ class RollCallService:
                 session_code = session['session_code']
                 if student.student_id in student_status_map and session_code in student_status_map[student.student_id]:
                     status = student_status_map[student.student_id][session_code]
-                    row.append(status_map.get(status, status))
+                    row.append(STATUS_MAP.get(status, status))
                 else:
                     row.append("")  # 没有点到该学生，留空
             ws.append(row)
@@ -652,12 +660,17 @@ class RollCallService:
             result['errors'].append(f"文件不存在: {file_path}")
             return result
         
+        from utils.config import Config
+        config = Config()
+        
         file_ext = os.path.splitext(file_path)[1].lower()
         
         try:
-            students_data = []
-            
             # 根据文件类型解析数据
+            if file_ext not in config.STUDENT_IMPORT_SUPPORTED_FORMATS:
+                result['errors'].append(f"不支持的文件格式: {file_ext}")
+                return result
+            
             if file_ext == '.csv':
                 students_data = self._parse_csv(file_path)
             elif file_ext in ['.xlsx', '.xls']:
@@ -675,67 +688,12 @@ class RollCallService:
             
             # 导入数据
             for idx, student_data in enumerate(students_data, 1):
-                try:
-                    # 验证必需字段
-                    if not student_data.get('student_id') or not student_data.get('name'):
-                        result['skipped'] += 1
-                        result['errors'].append(f"第{idx}行: 缺少必需字段(student_id或name)")
-                        continue
-                    
-                    student_id = str(student_data['student_id']).strip()
-                    name = str(student_data['name']).strip()
-                    
-                    if not student_id or not name:
-                        result['skipped'] += 1
-                        result['errors'].append(f"第{idx}行: 学号或姓名为空")
-                        continue
-                    
-                    # 检查学生是否已存在
-                    existing_student = self.student_repo.find_by_id(student_id)
-                    
-                    # 如果学生已存在且不允许更新，则跳过（这是警告，不是错误）
-                    if existing_student and not update_existing:
-                        result['skipped'] += 1
-                        result['warnings'].append(f"第{idx}行: 学生 {student_id} ({name}) 已存在，跳过更新")
-                        continue
-                    
-                    # 如果学生已存在，更新学生信息
-                    # 注意：由于roll_call_records表中已保存student_name快照，历史记录不会受影响
-                    if existing_student:
-                        # 检查姓名是否改变，给出警告提示
-                        if existing_student.name != name:
-                            result['warnings'].append(
-                                f"第{idx}行: 学生 {student_id} 的姓名从 '{existing_student.name}' 更新为 '{name}'。"
-                                f"历史点名记录中的姓名已保存快照，不会改变。"
-                            )
-                        # 更新学生信息，保留统计信息
-                        student = Student(
-                            student_id=student_id,
-                            name=name,  # 允许更新姓名（历史记录已保存快照）
-                            nickname=student_data.get('nickname', '').strip() or existing_student.nickname or None,
-                            photo_path=student_data.get('photo_path', '').strip() or existing_student.photo_path or None,
-                            cut_count=existing_student.cut_count,
-                            called_count=existing_student.called_count,
-                        )
-                        result['updated'] += 1
-                    else:
-                        # 新增学生
-                        student = Student(
-                            student_id=student_id,
-                            name=name,
-                            nickname=student_data.get('nickname', '').strip() or None,
-                            photo_path=student_data.get('photo_path', '').strip() or None,
-                            cut_count=0,
-                            called_count=0,
-                        )
-                        result['imported'] += 1
-                    
-                    # 保存学生
-                    self.student_repo.save(student)
-                        
-                except Exception as e:
-                    result['skipped'] += 1
-                    result['errors'].append(f"第{idx}行处理失败: {str(e)}")
+                process_result = self._process_student_record(student_data, idx, update_existing)
+                result['imported'] += process_result['imported']
+                result['updated'] += process_result['updated']
+                result['skipped'] += process_result['skipped']
+                result['errors'].extend(process_result['errors'])
+                result['warnings'].extend(process_result['warnings'])
             
             result['success'] = True
             
@@ -746,26 +704,152 @@ class RollCallService:
         
         return result
     
+    def _validate_student_data(self, student_data: Dict[str, Any], row_index: int) -> Tuple[Optional[str], Optional[str], List[str]]:
+        """
+        验证学生数据
+        
+        Returns:
+            (student_id, name, errors) 元组
+        """
+        errors = []
+        
+        # 验证必需字段
+        if not student_data.get('student_id') or not student_data.get('name'):
+            errors.append(f"第{row_index}行: 缺少必需字段(student_id或name)")
+            return None, None, errors
+        
+        student_id = str(student_data['student_id']).strip()
+        name = str(student_data['name']).strip()
+        
+        if not student_id or not name:
+            errors.append(f"第{row_index}行: 学号或姓名为空")
+            return None, None, errors
+        
+        return student_id, name, errors
+    
+    def _process_student_record(
+        self, 
+        student_data: Dict[str, Any], 
+        row_index: int, 
+        update_existing: bool
+    ) -> Dict[str, Any]:
+        """
+        处理单条学生记录
+        
+        Returns:
+            包含 imported, updated, skipped, errors, warnings 的字典
+        """
+        result = {
+            'imported': 0,
+            'updated': 0,
+            'skipped': 0,
+            'errors': [],
+            'warnings': []
+        }
+        
+        try:
+            # 验证数据
+            student_id, name, validation_errors = self._validate_student_data(student_data, row_index)
+            if validation_errors:
+                result['skipped'] = 1
+                result['errors'].extend(validation_errors)
+                return result
+            
+            # 检查学生是否已存在
+            existing_student = self.student_repo.find_by_id(student_id)
+            
+            # 如果学生已存在且不允许更新，则跳过
+            if existing_student and not update_existing:
+                result['skipped'] = 1
+                result['warnings'].append(f"第{row_index}行: 学生 {student_id} ({name}) 已存在，跳过更新")
+                return result
+            
+            # 创建或更新学生对象
+            student = self._create_or_update_student(student_data, student_id, name, existing_student, row_index, result)
+            
+            # 保存学生
+            self.student_repo.save(student)
+            
+            if existing_student:
+                result['updated'] = 1
+            else:
+                result['imported'] = 1
+                
+        except Exception as e:
+            result['skipped'] = 1
+            result['errors'].append(f"第{row_index}行处理失败: {str(e)}")
+        
+        return result
+    
+    def _create_or_update_student(
+        self,
+        student_data: Dict[str, Any],
+        student_id: str,
+        name: str,
+        existing_student: Optional[Student],
+        row_index: int,
+        result: Dict[str, Any]
+    ) -> Student:
+        """创建或更新学生对象"""
+        if existing_student:
+            # 检查姓名是否改变，给出警告提示
+            if existing_student.name != name:
+                result['warnings'].append(
+                    f"第{row_index}行: 学生 {student_id} 的姓名从 '{existing_student.name}' 更新为 '{name}'。"
+                    f"历史点名记录中的姓名已保存快照，不会改变。"
+                )
+            # 更新学生信息，保留统计信息
+            return Student(
+                student_id=student_id,
+                name=name,
+                nickname=student_data.get('nickname', '').strip() or existing_student.nickname or None,
+                photo_path=student_data.get('photo_path', '').strip() or existing_student.photo_path or None,
+                cut_count=existing_student.cut_count,
+                called_count=existing_student.called_count,
+            )
+        else:
+            # 新增学生
+            return Student(
+                student_id=student_id,
+                name=name,
+                nickname=student_data.get('nickname', '').strip() or None,
+                photo_path=student_data.get('photo_path', '').strip() or None,
+                cut_count=0,
+                called_count=0,
+            )
+    
+    def _map_column_name(self, column_name: str) -> Optional[str]:
+        """
+        将列名映射到标准字段名
+        
+        Args:
+            column_name: 原始列名
+            
+        Returns:
+            标准字段名，如果无法映射则返回None
+        """
+        column_normalized = column_name.strip()
+        column_lower = column_normalized.lower()
+        
+        for field_name, aliases in STUDENT_COLUMN_MAPPING.items():
+            if column_normalized in aliases or column_lower in [a.lower() for a in aliases]:
+                return field_name
+        return None
+    
     def _parse_csv(self, file_path: str) -> List[Dict[str, Any]]:
         """解析CSV文件"""
+        from utils.config import Config
+        config = Config()
+        
         students = []
-        with open(file_path, 'r', encoding='utf-8-sig') as f:
+        with open(file_path, 'r', encoding=config.STUDENT_IMPORT_ENCODING) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # 处理可能的列名变体
                 student_data = {}
                 for key, value in row.items():
-                    key_normalized = key.strip()
-                    key_lower = key_normalized.lower()
-                    # 同时检查原始键名和转小写后的键名
-                    if key_normalized in ['学号', 'student_id', 'studentid', 'id'] or key_lower in ['student_id', 'studentid', 'id']:
-                        student_data['student_id'] = value
-                    elif key_normalized in ['姓名', 'name'] or key_lower == 'name':
-                        student_data['name'] = value
-                    elif key_normalized in ['昵称', 'nickname', 'nick'] or key_lower in ['nickname', 'nick']:
-                        student_data['nickname'] = value
-                    elif key_normalized in ['照片', 'photo', 'photo_path', '头像'] or key_lower in ['photo', 'photo_path']:
-                        student_data['photo_path'] = value
+                    mapped_field = self._map_column_name(key)
+                    if mapped_field:
+                        student_data[mapped_field] = value
                 students.append(student_data)
         return students
     
@@ -790,19 +874,12 @@ class RollCallService:
             for idx, cell in enumerate(row):
                 if idx >= len(headers):
                     break
-                header_raw = str(headers[idx]).strip() if headers[idx] else ''
-                header_lower = header_raw.lower()
+                header_name = str(headers[idx]) if headers[idx] else ''
                 value = cell.value
                 
-                # 同时检查原始键名和转小写后的键名
-                if header_raw in ['学号', 'student_id', 'studentid', 'id'] or header_lower in ['student_id', 'studentid', 'id']:
-                    student_data['student_id'] = str(value) if value else ''
-                elif header_raw in ['姓名', 'name'] or header_lower == 'name':
-                    student_data['name'] = str(value) if value else ''
-                elif header_raw in ['昵称', 'nickname', 'nick'] or header_lower in ['nickname', 'nick']:
-                    student_data['nickname'] = str(value) if value else ''
-                elif header_raw in ['照片', 'photo', 'photo_path', '头像'] or header_lower in ['photo', 'photo_path']:
-                    student_data['photo_path'] = str(value) if value else ''
+                mapped_field = self._map_column_name(header_name)
+                if mapped_field:
+                    student_data[mapped_field] = str(value) if value else ''
             
             if student_data:
                 students.append(student_data)

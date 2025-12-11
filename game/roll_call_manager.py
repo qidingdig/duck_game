@@ -12,8 +12,9 @@ from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Optional
 
 from services.roll_call_service import RollCallService, Student
-from ui.roll_call_window import RollCallWindow
+from ui.roll_call.roll_call_window import RollCallWindow
 from ui.message_dialog import MessageDialogHelper
+from utils.logger import get_logger
 
 
 class RollCallManager:
@@ -38,35 +39,25 @@ class RollCallManager:
         self._current_student: Optional[Dict] = None
         self._current_order: int = 0
         self._last_record_ids: Dict[str, int] = {}
+        self._logger = get_logger("RollCallManager")
 
     # ------------------------------------------------------------------ API --
     def request_window(self) -> None:
         """Enqueue request to show the roll call window in UI thread."""
-        print(f"[DEBUG] RollCallManager.request_window 被调用")
-        print(f"[DEBUG] _ui_queue = {self._ui_queue}")
         try:
             self._ui_queue.put(("show_roll_call_window",), block=False)
-            print(f"[DEBUG] 事件已放入队列")
         except Exception as exc:
-            print(f"[RollCallManager] 无法请求点名窗口: {exc}")
-            import traceback
-            traceback.print_exc()
+            self._logger.error(f"无法请求点名窗口: {exc}", exc_info=True)
 
     def show_window(self, tk_root) -> None:
         """Create and display the roll call window (runs on UI thread)."""
-        print(f"[DEBUG] show_window 被调用，tk_root={tk_root}")
         if self._window:
-            print(f"[DEBUG] 窗口已存在，调用 show()")
             try:
                 self._window.show()
-                print(f"[DEBUG] 窗口 show() 调用成功")
             except Exception as e:
-                print(f"[DEBUG] 窗口 show() 失败: {e}")
-                import traceback
-                traceback.print_exc()
+                self._logger.error(f"显示窗口失败: {e}", exc_info=True)
             return
 
-        print(f"[DEBUG] 创建新窗口")
         try:
             self._window = RollCallWindow(
                 tk_root=tk_root,
@@ -77,13 +68,9 @@ class RollCallManager:
                 on_view_records_callback=self._on_view_records,
                 on_import_students_callback=self._on_import_students,
             )
-            print(f"[DEBUG] RollCallWindow 对象创建成功")
             self._window.show()
-            print(f"[DEBUG] 窗口 show() 调用成功，窗口应该已显示")
         except Exception as e:
-            print(f"[DEBUG] 创建或显示窗口失败: {e}")
-            import traceback
-            traceback.print_exc()
+            self._logger.error(f"创建或显示窗口失败: {e}", exc_info=True)
             self._window = None
     
     def request_records_window(self) -> None:
@@ -91,11 +78,11 @@ class RollCallManager:
         try:
             self._ui_queue.put(("show_roll_call_records_window",), block=False)
         except Exception as exc:
-            print(f"[RollCallManager] 无法请求记录窗口: {exc}")
+            self._logger.error(f"无法请求记录窗口: {exc}", exc_info=True)
     
     def show_records_window(self, tk_root) -> None:
         """Create and display the roll call records window (runs on UI thread)."""
-        from ui.roll_call_records_window import RollCallRecordsWindow
+        from ui.roll_call.roll_call_records_window import RollCallRecordsWindow
         
         records_window = RollCallRecordsWindow(
             tk_root=tk_root,
@@ -166,38 +153,31 @@ class RollCallManager:
         # 使用Tkinter的after方法延迟推进到第一个学生，避免阻塞UI线程
         # 等待行为持续时间结束后再推进到第一个学生
         # 这样特殊行为结束后才开始播报学生姓名
+        from utils.config import Config
+        config = Config()
+        
         if self._window and hasattr(self._window, '_root') and self._window._root:
-            # 使用Tkinter的after方法，5000毫秒后执行
-            self._window._root.after(5000, self._advance_student)
+            # 使用Tkinter的after方法，延迟后执行
+            self._window._root.after(config.ROLL_CALL_ADVANCE_DELAY_MS, self._advance_student)
         else:
             # 如果没有窗口，直接推进（不应该发生）
             self._advance_student()
         
         # 最终验证状态
         # 注意：由于使用了after延迟调用_advance_student，所以_current_student在此时还是None是正常的
-        print(f"[DEBUG] _on_start_config完成: roll_call_id={self._current_roll_call_id}, student=None (将在5秒后设置), roster剩余={len(self._roster)}")
 
     def _on_mark_status(self, status: str, student_id: Optional[str]) -> None:
         if status == "late":
             self._handle_late_status(student_id)
             return
 
-        # 调试信息
-        print(f"[DEBUG] _on_mark_status调用: status={status}, student_id={student_id}")
-        print(f"[DEBUG] 状态检查: roll_call_id={self._current_roll_call_id}, current_student={self._current_student is not None}")
-        if self._current_student:
-            print(f"[DEBUG] current_student详情: {self._current_student.get('student_id')} - {self._current_student.get('name')}")
-
         # 检查点名是否已开始（注意：roll_call_id可能为0，所以不能使用if not检查）
         if self._current_roll_call_id is None:
-            print(f"[DEBUG] 错误：_current_roll_call_id为None")
             self._message_dialog.show_warning("尚未开始点名。")
             return
         
         # 检查是否有当前学生（点名可能已结束）
         if not self._current_student:
-            print(f"[DEBUG] 错误：_current_student为None，但roll_call_id={self._current_roll_call_id}")
-            print(f"[DEBUG] roster长度={len(self._roster)}")
             self._message_dialog.show_warning("点名已结束或尚未开始。")
             return
 
@@ -254,16 +234,20 @@ class RollCallManager:
             self._message_dialog.show_warning(f"只能将旷课记录改为迟到，当前状态为：{self._get_status_text(record.status)}。")
             return
         
-        # 检查时间限制（10分钟内）
+        # 检查时间限制
+        from utils.config import Config
+        config = Config()
+        
         import time
         try:
             called_ts = time.mktime(time.strptime(record.called_time, "%Y-%m-%d %H:%M:%S"))
             elapsed_minutes = (time.time() - called_ts) / 60
-            if elapsed_minutes > 10:
-                self._message_dialog.show_warning(f"超过10分钟无法改为迟到（已过去 {elapsed_minutes:.1f} 分钟）。")
+            timeout_minutes = config.ROLL_CALL_LATE_UPDATE_TIMEOUT_MINUTES
+            if elapsed_minutes > timeout_minutes:
+                self._message_dialog.show_warning(f"超过{timeout_minutes}分钟无法改为迟到（已过去 {elapsed_minutes:.1f} 分钟）。")
                 return
         except Exception as e:
-            print(f"[RollCallManager] 时间解析错误: {e}")
+            self._logger.error(f"时间解析错误: {e}", exc_info=True)
             self._message_dialog.show_warning("无法解析记录时间，无法改为迟到。")
             return
         
@@ -271,7 +255,7 @@ class RollCallManager:
         success = self.service.update_record_status(
             record_id=record_id,
             new_status="late",
-            enforce_within_minutes=10,
+            enforce_within_minutes=config.ROLL_CALL_LATE_UPDATE_TIMEOUT_MINUTES,
         )
         if success:
             self._message_dialog.show_info(f"{student_id} 已改为迟到。")
@@ -280,13 +264,8 @@ class RollCallManager:
     
     def _get_status_text(self, status: str) -> str:
         """获取状态的中文文本"""
-        status_map = {
-            "present": "出勤",
-            "absent": "旷课",
-            "leave": "请假",
-            "late": "迟到",
-        }
-        return status_map.get(status, status)
+        from services.roll_call_service import STATUS_MAP
+        return STATUS_MAP.get(status, status)
 
     # ---------------------------------------------------------- Flow helpers --
     def _prepare_roster(self, mode: str, strategy: str, selected_count: int) -> List[Dict]:
@@ -319,7 +298,6 @@ class RollCallManager:
     def _advance_student(self) -> None:
         """推进到下一个学生"""
         if not self._window:
-            print(f"[DEBUG] _advance_student: 窗口不存在")
             return
         
         if not self._roster:
@@ -333,33 +311,13 @@ class RollCallManager:
             return
         
         # 从队列中取出下一个学生
-        if len(self._roster) == 0:
-            print(f"[DEBUG] 错误：roster为空但通过了检查")
-            return
-        
         self._current_student = self._roster.popleft()
-        
-        # 确保_current_student已设置
-        if not self._current_student:
-            print(f"[DEBUG] 错误：从roster取出后_current_student仍为None")
-            return
         
         # 同步到窗口（这会设置窗口的_current_student）
         self._window.set_student(self._current_student)
         
-        # 验证同步
-        if self._window._current_student != self._current_student:
-            print(f"[DEBUG] 警告：窗口和manager的_current_student不同步")
-        
-        # 验证状态（注意：roll_call_id可能为0，所以不能使用if not检查）
-        if self._current_roll_call_id is None:
-            print(f"[DEBUG] 警告：_current_roll_call_id为None，但_current_student已设置")
-        
         # 播报学生名字（在特殊行为结束后）
         self._announce_student_name()
-        
-        # 最终验证
-        print(f"[DEBUG] _advance_student完成: roll_call_id={self._current_roll_call_id}, student={self._current_student.get('name') if self._current_student else None}")
 
     def _announce_student_name(self) -> None:
         """播报当前学生名字"""
@@ -381,16 +339,13 @@ class RollCallManager:
                     # 添加小延迟，确保之前的播报完成
                     time.sleep(0.1)
                     success = self._speech_engine.speak(name)
-                    print(f"[DEBUG] 播报学生姓名: {name}, 成功: {success}")
                     if not success:
-                        print(f"[RollCallManager] 语音播报失败：无法添加到队列")
+                        self._logger.warning("语音播报失败：无法添加到队列")
                 else:
-                    print(f"[RollCallManager] 语音引擎不可用")
+                    self._logger.warning("语音引擎不可用")
         except Exception as e:
             # 语音播报失败不影响功能
-            print(f"[RollCallManager] 语音播报异常: {e}")
-            import traceback
-            traceback.print_exc()
+            self._logger.warning(f"语音播报异常: {e}", exc_info=True)
     
     def _on_view_records(self) -> None:
         """查看记录按钮回调"""
@@ -411,19 +366,15 @@ class RollCallManager:
             else:
                 self._message_dialog.show_warning("无法获取窗口根节点，请通过命令打开记录窗口")
         except Exception as e:
+            self._logger.error(f"打开记录窗口失败: {e}", exc_info=True)
             self._message_dialog.show_error(f"打开记录窗口失败: {e}")
-            print(f"[RollCallManager] 打开记录窗口失败: {e}")
-            import traceback
-            traceback.print_exc()
     
     def _on_import_students(self, file_path: str, update_existing: bool = True) -> Dict[str, Any]:
         """处理导入学生请求"""
         try:
             return self.service.import_students_from_file(file_path, update_existing=update_existing)
         except Exception as e:
-            print(f"[RollCallManager] 导入学生失败: {e}")
-            import traceback
-            traceback.print_exc()
+            self._logger.error(f"导入学生失败: {e}", exc_info=True)
             return {
                 'success': False,
                 'total': 0,

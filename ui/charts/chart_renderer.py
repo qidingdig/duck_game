@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ui.message_dialog import MessageDialogHelper
-from ui.chart_types import (
+from ui.charts.chart_types import (
     ChartStyle,
     ChartType,
     BarChart,
@@ -19,8 +19,8 @@ from ui.chart_types import (
     FunctionStatsChart,
     DetailTableChart,
 )
-from ui.chart_layout import LayoutStrategy, DefaultLayoutStrategy
-from ui.chart_data_extractor import ChartDataExtractor
+from ui.charts.chart_layout import LayoutStrategy, DefaultLayoutStrategy
+from ui.charts.chart_data_extractor import ChartDataExtractor
 
 
 class ChartRenderer:

@@ -62,7 +62,6 @@ class JumpBehavior(BehaviorStrategy):
     description = "蹦蹦跳跳"
 
     def start(self, duckling) -> None:
-        print(f"[DEBUG] JumpBehavior.start called for {duckling.name}")
         duckling.start_bounce()
 
     def stop(self, duckling) -> None:
@@ -74,7 +73,6 @@ class SpinBehavior(BehaviorStrategy):
     description = "转圈圈"
 
     def start(self, duckling) -> None:
-        print(f"[DEBUG] SpinBehavior.start called for {duckling.name}")
         duckling.start_spin()
 
     def stop(self, duckling) -> None:
@@ -86,7 +84,6 @@ class FlyBehavior(BehaviorStrategy):
     description = "飞起来了"
 
     def start(self, duckling) -> None:
-        print(f"[DEBUG] FlyBehavior.start called for {duckling.name}")
         duckling.start_fly()
 
     def stop(self, duckling) -> None:
@@ -110,7 +107,6 @@ class AttentionBehavior(BehaviorStrategy):
     description = "专注学习"
 
     def start(self, duckling) -> None:
-        print(f"[DEBUG] AttentionBehavior.start called for {duckling.name}")
         # 这里可以添加专注时的特殊外观逻辑
         # 目前暂时使用弹跳效果
         duckling.start_bounce()
@@ -166,16 +162,12 @@ class DuckBehaviorManager:
             self.notifier("提示：未检测到语音引擎（pyttsx3）。小鸭语音将以文本形式显示。\n")
 
     def trigger(self, event_name: str, ducklings: Iterable) -> None:
-        print(f"[DEBUG] DuckBehaviorManager.trigger called with event_name: {event_name}")
         action = self._actions.get(event_name)
         if not action:
-            print(f"[DEBUG] No action found for event: {event_name}, available actions: {list(self._actions.keys())}")
             return
         ducklings = list(ducklings)
         if not ducklings:
-            print(f"[DEBUG] No ducklings provided for event: {event_name}")
             return
-        print(f"[DEBUG] Starting action for {len(ducklings)} ducklings, behavior: {action.behavior.description}, sound: {action.sound.description}")
         action.start(ducklings, self.notifier, self.speech_engine)
 
         # 所有事件都使用固定持续时间，不再使用无限持续

@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional, Set
 import tkinter as tk
 from tkinter import filedialog
 
-from ui.chart_renderer import ChartRenderer
+from ui.charts.chart_renderer import ChartRenderer
 from ui.message_dialog import MessageDialogHelper
 from services.code_statistics.result_exporter import ResultExporter
 from services.code_statistics.statistics_service import CodeStatisticsService

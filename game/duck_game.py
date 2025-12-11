@@ -201,25 +201,16 @@ class DuckGame:
                 self.behavior_manager.trigger(event_name, getattr(self, 'ducklings', []))
         
         def handle_show_roll_call_window(item):
-            print(f"[DEBUG] handle_show_roll_call_window 被调用")
-            if not hasattr(self, 'roll_call_manager'):
-                print(f"[DEBUG] 错误：roll_call_manager 不存在")
-                return
-            if not hasattr(self, '_tk_root_manager'):
-                print(f"[DEBUG] 错误：_tk_root_manager 不存在")
+            if not hasattr(self, 'roll_call_manager') or not hasattr(self, '_tk_root_manager'):
                 return
             tk_root = self._tk_root_manager.get_root()
-            print(f"[DEBUG] tk_root = {tk_root}")
             if tk_root:
                 try:
                     self.roll_call_manager.show_window(tk_root)
-                    print(f"[DEBUG] show_window 调用成功")
                 except Exception as e:
-                    print(f"[DEBUG] show_window 调用失败: {e}")
+                    print(f"[DuckGame] 显示点名窗口失败: {e}")
                     import traceback
                     traceback.print_exc()
-            else:
-                print(f"[DEBUG] 错误：tk_root 为 None")
         
         def handle_show_roll_call_records_window(item):
             if hasattr(self, 'roll_call_manager') and hasattr(self, '_tk_root_manager'):
@@ -235,8 +226,6 @@ class DuckGame:
         self._ui_queue_processor.register_handler("show_roll_call_window", handle_show_roll_call_window)
         self._ui_queue_processor.register_handler("show_roll_call_records_window", handle_show_roll_call_records_window)
         
-        # 调试：打印已注册的处理器
-        print(f"[DEBUG] 已注册的UI队列处理器: {self._ui_queue_processor.get_registered_types()}")
     
     def _init_red_packet_game_manager(self):
         """初始化红包游戏管理器"""
@@ -362,19 +351,14 @@ class DuckGame:
 
         def handle_roll_call(user_input: str, ctx: Dict):
             game = ctx["game"]
-            print(f"[DEBUG] handle_roll_call 被调用，user_input={user_input}")
             if hasattr(game, "roll_call_manager"):
-                print(f"[DEBUG] roll_call_manager 存在，调用 request_window")
                 try:
                     game.roll_call_manager.request_window()
-                    print(f"[DEBUG] request_window 调用成功")
                 except Exception as e:
-                    print(f"[DEBUG] request_window 调用失败: {e}")
                     import traceback
                     traceback.print_exc()
                     game._update_text_display(f"唐老鸭: 打开点名窗口失败: {e}\n")
             else:
-                print(f"[DEBUG] 错误：roll_call_manager 不存在")
                 game._update_text_display("唐老鸭: 点名模块尚未初始化。\n")
 
         self.command_processor.register(
@@ -411,7 +395,6 @@ class DuckGame:
         if not user_input:
             return
         
-        print(f"[DEBUG] handle_user_command: 用户输入 = '{user_input}'")
         
         # 使用命令处理器处理
         context = {"game": self}
